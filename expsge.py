@@ -31,12 +31,12 @@ class P:
 
 class Q:
 	@staticmethod
-	def get_jobs(name_prefix):
-		return [elem for elem in xml.dom.minidom.parseString(subprocess.check_output(['qstat', '-xml'])).documentElement.getElementsByTagName('job_list') if elem.getElementsByTagName('JB_name')[0].firstChild.data.startswith(name_prefix)]
+	def get_jobs(name_prefix, state = ''):
+		return [elem for elem in xml.dom.minidom.parseString(subprocess.check_output(['qstat', '-xml'])).documentElement.getElementsByTagName('job_list') if elem.getElementsByTagName('JB_name')[0].firstChild.data.startswith(name_prefix) and elem.getElementsByTagName('state')[0].firstChild.data.startswith(state)]
 	
 	@staticmethod
-	def submit_job(sgejob_file, name):
-		subprocess.check_call(['qsub', '-N', name, sgejob_file])
+	def submit_job(sgejob_file, name, queue):
+		subprocess.check_call(['qsub', '-N', name, sgejob_file] + (['-q', queue] if queue else []))
 
 class path:
 	def __init__(self, string, mkdirs = False):
@@ -72,16 +72,17 @@ class Experiment:
 			return map(check_path, self.get_used_paths()) + [''] + list(itertools.starmap('export {0}="{1}"'.format, sorted(self.env.items()))) + ['', 'cd "%s"' % self.cwd] + self.executable.generate_shell_script_lines()
 				
 	class JobGroup:
-		def __init__(self, name):
+		def __init__(self, name, queue):
 			self.name = name
+			self.queue = queue
 			self.jobs = []
 
 	def __init__(self, name):
 		self.name = name
 		self.stages = []
 
-	def stage(self, name):
-		job_group = Experiment.JobGroup(name)
+	def stage(self, name, queue = None):
+		job_group = Experiment.JobGroup(name, queue)
 		self.stages.append(job_group)
 
 	def run(self, executable, name = None, env = {}, cwd = path.cwd()):
@@ -267,7 +268,7 @@ def run(exp_py, dry):
 
 	def wait_if_more_jobs_than(name_prefix, num_jobs):
 		while len(Q.get_jobs(name_prefix)) > num_jobs:
-			print 'Running %d jobs.' % num_jobs
+			print 'Running %d jobs, waiting %d jobs.' % (len(Q.get_jobs(name_prefix, 'r')), len(Q.get_jobs(name_prefix, 'qw')))
 			time.sleep(config.sleep_between_queue_checks)
 			html(e)
 		html(e)
@@ -277,7 +278,7 @@ def run(exp_py, dry):
 
 	while True:
 		wait_if_more_jobs_than(name_prefix, config.maximum_simultaneously_submitted_jobs)
-		Q.submit_job(P.sgejobfile(e.stages[next_job_group_idx].name, next_sgejob_idx), name_prefix)
+		Q.submit_job(P.sgejobfile(e.stages[next_job_group_idx].name, next_sgejob_idx), name_prefix, e.stages[next_job_group_idx].queue)
 		if next_sgejob_idx + 1 == len(e.stages[next_job_group_idx].jobs):
 			next_job_group_idx = next_job_group_idx + 1
 			next_sgejob_idx = 0
