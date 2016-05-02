@@ -267,8 +267,13 @@ def run(exp_py, dry):
 		return
 
 	def wait_if_more_jobs_than(name_prefix, num_jobs):
+		last_msg = None
 		while len(Q.get_jobs(name_prefix)) > num_jobs:
-			print 'Running %d jobs, waiting %d jobs.' % (len(Q.get_jobs(name_prefix, 'r')), len(Q.get_jobs(name_prefix, 'qw')))
+			msg = 'Running %d jobs, waiting %d jobs.' % (len(Q.get_jobs(name_prefix, 'r')), len(Q.get_jobs(name_prefix, 'qw')))
+			if msg != last_msg:
+				print msg
+				last_msg = msg
+
 			time.sleep(config.sleep_between_queue_checks)
 			html(e)
 		html(e)
