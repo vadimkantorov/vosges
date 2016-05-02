@@ -47,7 +47,7 @@ class Experiment:
 			self.cwd = cwd
 
 		def get_used_paths(self):
-			return self.executable.get_used_paths() + [v for k, v in sorted(self.env.items()) if isinstance(v, path)]
+			return [v for k, v in sorted(self.env.items()) if isinstance(v, path)] + [self.cwd] + self.executable.get_used_paths()
 
 		def generate_shell_script_lines(self):
 			check_path = lambda path: '''if [ ! -f "%s" ]; then echo 'File "%s" does not exist'; exit 1; fi''' % (path, path)
