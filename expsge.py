@@ -69,7 +69,7 @@ class Experiment:
 			return [v for k, v in sorted(self.env.items()) if isinstance(v, path)] + [self.cwd] + self.executable.get_used_paths()
 
 		def generate_shell_script_lines(self):
-			check_path = lambda path: '''if [ ! -f "%s" ]; then echo 'File "%s" does not exist'; exit 1; fi''' % (path, path)
+			check_path = lambda path: '''if [ ! -e "%s" ]; then echo 'File "%s" does not exist'; exit 1; fi''' % (path, path)
 			return map(check_path, self.get_used_paths()) + [''] + list(itertools.starmap('export {0}="{1}"'.format, sorted(self.env.items()))) + ['', 'cd "%s"' % self.cwd] + self.executable.generate_shell_script_lines()
 				
 	class JobGroup:
@@ -161,6 +161,7 @@ def html(e):
 			{
 				currentStageIndex = index;
 				$('#divJobs').html($('#tmplJobs').render(j.stages[currentStageIndex]));
+				$('#divJob').html('');
 			}
 
 			function showJobByIndex(index)
@@ -246,9 +247,9 @@ def gen(e):
 				f.write('\necho >&2 "expsgejob_jobfinished"')
 				f.write('\n\n# end\n')
 
-			for path in job.get_used_paths():
-				if path.mkdirs == True and not os.path.exists(str(path)):
-					os.makedirs(str(path))
+			for p in job.get_used_paths():
+				if p.mkdirs == True and not os.path.exists(str(p)):
+					os.makedirs(str(p))
 
 	for job_group in e.stages:
 		for job_idx, job in enumerate(job_group.jobs):
