@@ -4,12 +4,12 @@ A very simple Python interface for generating Sun Grid Engine (SGE) jobs, with a
 To use, define this alias:
 
 ```
-alias exp='python <($([ -z "$(which curl)" ] && echo "wget -nv -O -" || echo "curl -sS") https://raw.githubusercontent.com/vadimkantorov/expsge/master/expsge.py)'
+alias expsge='python <($([ -z "$(which curl)" ] && echo "wget -nv -O -" || echo "curl -sS") https://raw.githubusercontent.com/vadimkantorov/expsge/master/expsge.py)'
 ```
 
 then use with commands like:
 ```
-exp run myexp.exp.py
+expsge run myexp.exp.py
 ```
 
 Consumed env variables: EXPSGE_HTML_REPORT, EXPSGE_ROOT and EXPSGE_TORCH_ACTIVATE
