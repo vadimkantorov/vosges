@@ -25,8 +25,9 @@ class P:
 	logdir = staticmethod(lambda job_group_name: os.path.join(P.log, job_group_name))
 	sgejobdir = staticmethod(lambda job_group_name: os.path.join(P.sgejob, job_group_name))
 	jobfile = staticmethod(lambda job_group_name, job_idx: os.path.join(P.jobdir(job_group_name), 'j%06d.sh' % job_idx))
-	logfiles = staticmethod(lambda job_group_name, job_idx: (os.path.join(P.logdir(job_group_name), 'stdout_%06d.txt' % job_idx), os.path.join(P.logdir(job_group_name), 'stderr_%06d.txt' % job_idx)))
+	joblogfiles = staticmethod(lambda job_group_name, job_idx: (os.path.join(P.logdir(job_group_name), 'stdout_j%06d.txt' % job_idx), os.path.join(P.logdir(job_group_name), 'stderr_j%06d.txt' % job_idx)))
 	sgejobfile = staticmethod(lambda job_group_name, sgejob_idx: os.path.join(P.sgejobdir(job_group_name), 's%06d.sh' % sgejob_idx))
+	sgejoblogfiles = staticmethod(lambda job_group_name, sgejob_idx: (os.path.join(P.logdir(job_group_name), 'stdout_s%06d.txt' % sgejob_idx), os.path.join(P.logdir(job_group_name), 'stderr_s%06d.txt' % sgejob_idx)))
 	jsonfile = staticmethod(lambda : os.path.join(P.json, 'expsgejob.json'))
 
 class Q:
@@ -228,7 +229,7 @@ def html(e):
 	for job_group in e.stages:
 		jobs = []
 		for job_idx, job in enumerate(job_group.jobs):
-			stdout, stderr = map(lambda x: open(x).read() if os.path.exists(x) else None, P.logfiles(job_group.name, job_idx))
+			stdout, stderr = map(lambda x: open(x).read() if os.path.exists(x) else None, P.joblogfiles(job_group.name, job_idx))
 			jobs.append({'name' : job.name, 'stdout' : stdout, 'stderr' : stderr})
 		j['stages'].append({'name' : job_group.name, 'jobs' : jobs})
 			
@@ -257,11 +258,12 @@ def gen(e):
 				f.write('#$ -S /bin/bash\n')
 				f.write('#$ -l mem_req=%.2fG\n' % job_group.mem_lo_gb)
 				f.write('#$ -l h_vmem=%.2fG\n' % job_group.mem_hi_gb)
+				f.write('#$ -o %s -e %s\n' % P.sgejoblogfiles(job_group.name, sgejob_idx))
 				if job_group.queue:
 					f.write('#$ -q %s\n' % job_group.queue)
 
 				f.write('\n# job_group.name = "%s", job.name = "%s", job_idx = %d\n' % (job_group.name, job.name, job_idx))
-				f.write('/usr/bin/time -v bash -e "%s" > "%s" 2> "%s"' % ((P.jobfile(job_group.name, job_idx), ) + P.logfiles(job_group.name, job_idx)))
+				f.write('/usr/bin/time -v bash -e "%s" > "%s" 2> "%s"' % ((P.jobfile(job_group.name, job_idx), ) + P.joblogfiles(job_group.name, job_idx)))
 				f.write('\n# end\n\n')
 
 def run(exp_py, dry):
