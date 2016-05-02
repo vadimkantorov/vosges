@@ -45,10 +45,12 @@ class Experiment:
 			self.executable = executable
 			self.env = env
 
+		def get_used_paths(self):
+			return self.executable.get_used_paths() + [v for k, v in sorted(self.env.items()) if isinstance(v, path)]
+
 		def generate_shell_script_lines(self):
-			used_paths = self.executable.get_used_paths() + [v for k, v in sorted(self.env.items()) if isinstance(v, path)]
 			check_path = lambda path: '''if [ ! -f "%s" ]; then echo 'File "%s" does not exist'; exit 1; fi''' % (path, path)
-			return map(check_path, used_paths) + [''] + list(itertools.starmap('export {0}="{1}"'.format, sorted(self.env.items()))) + [''] + self.executable.generate_shell_script_lines()
+			return map(check_path, self.get_used_paths()) + [''] + list(itertools.starmap('export {0}="{1}"'.format, sorted(self.env.items()))) + [''] + self.executable.generate_shell_script_lines()
 				
 	class JobGroup:
 		def __init__(self, name):
@@ -69,11 +71,15 @@ class Experiment:
 		self.stages[-1].jobs.append(job)
 		
 class path:
-	def __init__(self, string):
+	def __init__(self, string, makedirs = False):
 		self.string = string
+		self.makedirs = makedirs
 
 	def join(self, *args):
-		return path(os.path.join(str(self), *map(str, args)))
+		return path(os.path.join(self.string, *map(str, args)))
+
+	def makedirs(self):
+		return path(self.string, True)
 
 	@staticmethod
 	def cwd():
@@ -233,6 +239,10 @@ def gen(e):
 				f.write('\n'.join(job.generate_shell_script_lines()))
 				f.write('\necho >&2 "expsge_jobfinished"')
 				f.write('\n\n# end\n')
+
+			for path in map(str, job.get_used_paths()):
+				if path.makedirs == True and not os.path.exists(path):
+					os.makedirs(path)
 
 	for job_group in e.stages:
 		for job_idx, job in enumerate(job_group.jobs):
