@@ -38,6 +38,24 @@ class Q:
 	def submit_job(sgejob_file, name):
 		subprocess.check_call(['qsub', '-N', name, sgejob_file])
 
+class path:
+	def __init__(self, string, mkdirs = False):
+		self.string = string
+		self.mkdirs = mkdirs
+
+	def join(self, *args):
+		return path(os.path.join(self.string, *map(str, args)))
+
+	def makedirs(self):
+		return path(self.string, True)
+
+	@staticmethod
+	def cwd():
+		return path(os.getcwd())
+	
+	def __str__(self):
+		return self.string
+
 class Experiment:
 	class Job:
 		def __init__(self, name, executable, env, cwd):
@@ -66,29 +84,11 @@ class Experiment:
 		job_group = Experiment.JobGroup(name)
 		self.stages.append(job_group)
 
-	def run(self, executable, name = None, env = {}, cwd = '.'):
+	def run(self, executable, name = None, env = {}, cwd = path.cwd()):
 		name = name or str(len(self.stages[-1].jobs))
 		job = Experiment.Job(name, executable, env, cwd)
 		self.stages[-1].jobs.append(job)
 		
-class path:
-	def __init__(self, string, mkdirs = False):
-		self.string = string
-		self.mkdirs = mkdirs
-
-	def join(self, *args):
-		return path(os.path.join(self.string, *map(str, args)))
-
-	def makedirs(self):
-		return path(self.string, True)
-
-	@staticmethod
-	def cwd():
-		return path(os.getcwd())
-	
-	def __str__(self):
-		return self.string
-
 class shell:
 	def __init__(self, script_path, args = ''):
 		assert isinstance(script_path, path)
