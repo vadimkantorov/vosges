@@ -35,8 +35,8 @@ class Q:
 		return [elem for elem in xml.dom.minidom.parseString(subprocess.check_output(['qstat', '-xml'])).documentElement.getElementsByTagName('job_list') if elem.getElementsByTagName('JB_name')[0].firstChild.data.startswith(name_prefix) and elem.getElementsByTagName('state')[0].firstChild.data.startswith(state)]
 	
 	@staticmethod
-	def submit_job(sgejob_file, name, queue):
-		subprocess.check_call(['qsub', '-N', name, sgejob_file] + (['-q', queue] if queue else []))
+	def submit_job(sgejob_file):
+		subprocess.check_call(['qsub', sgejob_file])
 
 class path:
 	def __init__(self, string, mkdirs = False):
@@ -75,6 +75,8 @@ class Experiment:
 		def __init__(self, name, queue):
 			self.name = name
 			self.queue = queue
+			self.mem_lo_gb = 10
+			self.mem_hi_gb = 32
 			self.jobs = []
 
 	def __init__(self, name):
@@ -250,6 +252,13 @@ def gen(e):
 		for job_idx, job in enumerate(job_group.jobs):
 			sgejob_idx = job_idx
 			with open(P.sgejobfile(job_group.name, sgejob_idx), 'w') as f:
+				f.write('#$ -N %s_%s\n' % (e.name, job_group.name))
+				f.write('#$ -S /bin/bash\n')
+				f.write('#$ mem_req=%.2fG' % job_group.mem_lo_gb)
+				f.write('#$ h_vmem=%.2fG' % job_group.mem_hi_gb)
+				if job_group.queue:
+					f.write('#$ -a %s\n' % job_group.queue)
+
 				f.write('# job_group.name = "%s", job.name = "%s", job_idx = %d\n' % (job_group.name, job.name, job_idx))
 				f.write('/usr/bin/time -v bash -e "%s" > "%s" 2> "%s"' % ((P.jobfile(job_group.name, job_idx), ) + P.logfiles(job_group.name, job_idx)))
 				f.write('\n# end\n\n')
@@ -283,7 +292,7 @@ def run(exp_py, dry):
 
 	while True:
 		wait_if_more_jobs_than(name_prefix, config.maximum_simultaneously_submitted_jobs)
-		Q.submit_job(P.sgejobfile(e.stages[next_job_group_idx].name, next_sgejob_idx), name_prefix, e.stages[next_job_group_idx].queue)
+		Q.submit_job(P.sgejobfile(e.stages[next_job_group_idx].name, next_sgejob_idx))
 		if next_sgejob_idx + 1 == len(e.stages[next_job_group_idx].jobs):
 			next_job_group_idx = next_job_group_idx + 1
 			next_sgejob_idx = 0
