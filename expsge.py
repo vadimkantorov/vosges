@@ -24,9 +24,9 @@ class P:
 	jobdir = staticmethod(lambda job_group_name: os.path.join(P.job, job_group_name))
 	logdir = staticmethod(lambda job_group_name: os.path.join(P.log, job_group_name))
 	sgedir = staticmethod(lambda job_group_name: os.path.join(P.sge, job_group_name))
-	jobfile = staticmethod(lambda job_group_name, job_idx: os.path.join(P.jobdir(job_group_name), '%06d.sh' % job_idx))
+	jobfile = staticmethod(lambda job_group_name, job_idx: os.path.join(P.jobdir(job_group_name), 'j%06d.sh' % job_idx))
 	logfiles = staticmethod(lambda job_group_name, job_idx: (os.path.join(P.logdir(job_group_name), 'stdout_%06d.txt' % job_idx), os.path.join(P.logdir(job_group_name), 'stderr_%06d.txt' % job_idx)))
-	sgefile = staticmethod(lambda job_group_name, sge_idx: os.path.join(P.sgedir(job_group_name), '%06d.sh' % sge_idx))
+	sgefile = staticmethod(lambda job_group_name, sge_idx: os.path.join(P.sgedir(job_group_name), 's%06d.sh' % sge_idx))
 	jsonfile = staticmethod(lambda : os.path.join(P.json, 'expsge.json'))
 
 class Q:
