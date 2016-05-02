@@ -17,40 +17,41 @@ class P:
 	root = os.getenv('EXPSGE_ROOT')
 	log = os.path.join(root, 'log')
 	job = os.path.join(root, 'job')
-	sge = os.path.join(root, 'sge')
+	sgejob = os.path.join(root, 'sgejob')
 
-	all_dirs = [root, log, job, sge]
+	all_dirs = [root, log, job, sgejob]
 
 	jobdir = staticmethod(lambda job_group_name: os.path.join(P.job, job_group_name))
 	logdir = staticmethod(lambda job_group_name: os.path.join(P.log, job_group_name))
-	sgedir = staticmethod(lambda job_group_name: os.path.join(P.sge, job_group_name))
+	sgejobdir = staticmethod(lambda job_group_name: os.path.join(P.sgejob, job_group_name))
 	jobfile = staticmethod(lambda job_group_name, job_idx: os.path.join(P.jobdir(job_group_name), 'j%06d.sh' % job_idx))
 	logfiles = staticmethod(lambda job_group_name, job_idx: (os.path.join(P.logdir(job_group_name), 'stdout_%06d.txt' % job_idx), os.path.join(P.logdir(job_group_name), 'stderr_%06d.txt' % job_idx)))
-	sgefile = staticmethod(lambda job_group_name, sge_idx: os.path.join(P.sgedir(job_group_name), 's%06d.sh' % sge_idx))
-	jsonfile = staticmethod(lambda : os.path.join(P.json, 'expsge.json'))
+	sgejobfile = staticmethod(lambda job_group_name, sgejob_idx: os.path.join(P.sgejobdir(job_group_name), 's%06d.sh' % sgejob_idx))
+	jsonfile = staticmethod(lambda : os.path.join(P.json, 'expsgejob.json'))
 
 class Q:
 	@staticmethod
-	def get_jobs():
-		return xml.dom.minidom.parseString(subprocess.check_output(['qstat', '-xml'])).documentElement.getElementsByTagName('job_list')
+	def get_jobs(name_prefix):
+		return [elem for elem in xml.dom.minidom.parseString(subprocess.check_output(['qstat', '-xml'])).documentElement.getElementsByTagName('job_list') if elem.getElementsByTagName('JB_name')[0].firstChild.data.startswith(name_prefix)]
 	
 	@staticmethod
-	def submit_job(sge_file):
-		subprocess.check_call(['qsub', sge_file])
+	def submit_job(sgejob_file, name):
+		subprocess.check_call(['qsub', '-N', name, sgejob_file])
 
 class Experiment:
 	class Job:
-		def __init__(self, name, executable, env):
+		def __init__(self, name, executable, env, cwd):
 			self.name = name
 			self.executable = executable
 			self.env = env
+			self.cwd = cwd
 
 		def get_used_paths(self):
 			return self.executable.get_used_paths() + [v for k, v in sorted(self.env.items()) if isinstance(v, path)]
 
 		def generate_shell_script_lines(self):
 			check_path = lambda path: '''if [ ! -f "%s" ]; then echo 'File "%s" does not exist'; exit 1; fi''' % (path, path)
-			return map(check_path, self.get_used_paths()) + [''] + list(itertools.starmap('export {0}="{1}"'.format, sorted(self.env.items()))) + [''] + self.executable.generate_shell_script_lines()
+			return map(check_path, self.get_used_paths()) + [''] + list(itertools.starmap('export {0}="{1}"'.format, sorted(self.env.items()))) + ['', 'cd "%s"' % self.cwd] + self.executable.generate_shell_script_lines()
 				
 	class JobGroup:
 		def __init__(self, name):
@@ -65,9 +66,9 @@ class Experiment:
 		job_group = Experiment.JobGroup(name)
 		self.stages.append(job_group)
 
-	def run(self, executable, name = None, env = {}):
+	def run(self, executable, name = None, env = {}, cwd = '.'):
 		name = name or str(len(self.stages[-1].jobs))
-		job = Experiment.Job(name, executable, env)
+		job = Experiment.Job(name, executable, env, cwd)
 		self.stages[-1].jobs.append(job)
 		
 class path:
@@ -123,7 +124,7 @@ def init(exp_py):
 	for job_group in e.stages:
 		os.makedirs(P.logdir(job_group.name))
 		os.makedirs(P.jobdir(job_group.name))
-		os.makedirs(P.sgedir(job_group.name))
+		os.makedirs(P.sgejobdir(job_group.name))
 	
 	return e
 
@@ -235,9 +236,9 @@ def gen(e):
 		for job_idx, job in enumerate(job_group.jobs):
 			with open(P.jobfile(job_group.name, job_idx), 'w') as f:
 				f.write('# job_group.name = "%s", job.name = "%s", job_idx = %d\n\n' % (job_group.name, job.name, job_idx ))
-				f.write('echo >&2 "expsge_jobstarted"\n')
+				f.write('echo >&2 "expsgejob_jobstarted"\n')
 				f.write('\n'.join(job.generate_shell_script_lines()))
-				f.write('\necho >&2 "expsge_jobfinished"')
+				f.write('\necho >&2 "expsgejob_jobfinished"')
 				f.write('\n\n# end\n')
 
 			for path in job.get_used_paths():
@@ -246,8 +247,8 @@ def gen(e):
 
 	for job_group in e.stages:
 		for job_idx, job in enumerate(job_group.jobs):
-			sge_idx = job_idx
-			with open(P.sgefile(job_group.name, sge_idx), 'w') as f:
+			sgejob_idx = job_idx
+			with open(P.sgejobfile(job_group.name, sgejob_idx), 'w') as f:
 				f.write('# job_group.name = "%s", job.name = "%s", job_idx = %d\n' % (job_group.name, job.name, job_idx))
 				f.write('/usr/bin/time -v bash -e "%s" > "%s" 2> "%s"' % ((P.jobfile(job_group.name, job_idx), ) + P.logfiles(job_group.name, job_idx)))
 				f.write('\n# end\n\n')
@@ -264,32 +265,31 @@ def run(exp_py, dry):
 		print 'Dry run. Quitting.'
 		return
 
-
-	next_job_group_idx, next_sge_idx = 0, 0
-	while True:
-		if len(Q.get_jobs()) < config.maximum_simultaneously_submitted_jobs:
-			print 'Submitting [%s] # %d.' % (e.stages[next_job_group_idx].name, next_sge_idx)
-			Q.submit_job(P.sgefile(e.stages[next_job_group_idx].name, next_sge_idx))
-			if next_sge_idx + 1 == len(e.stages[next_job_group_idx].jobs):
-				next_job_group_idx = next_job_group_idx + 1
-				next_sge_idx = 0
-
-				if next_job_group_idx == len(e.stages):
-					break
-			else:
-				next_sge_idx += 1
-		else:
-			print 'Running %d jobs.' % config.maximum_simultaneously_submitted_jobs
-			time.sleep(config.sleep_between_queue_checks)
-		html(e)
-
-	while True:
-		num_jobs = len(Q.get_jobs())
-		if num_jobs != 0:
+	def wait_if_more_jobs_than(name_prefix, num_jobs):
+		while len(Q.get_jobs(name_prefix)) > num_jobs:
 			print 'Running %d jobs.' % num_jobs
 			time.sleep(config.sleep_between_queue_checks)
+			html(e)
 		html(e)
+	
+	next_job_group_idx, next_sgejob_idx = 0, 0
+	name_prefix = e.name
 
+	while True:
+		wait_if_more_jobs_than(name_prefix, config.maximum_simultaneously_submitted_jobs)
+		Q.submit_job(P.sgejobfile(e.stages[next_job_group_idx].name, next_sgejob_idx), name_prefix)
+		if next_sgejob_idx + 1 == len(e.stages[next_job_group_idx].jobs):
+			next_job_group_idx = next_job_group_idx + 1
+			next_sgejob_idx = 0
+
+			if next_job_group_idx < len(e.stages):
+				wait_if_more_jobs_than(name_prefix, 0)
+			else:
+				break
+		else:
+			next_sgejob_idx += 1
+
+	wait_if_more_jobs_than(name_prefix, 0)
 	print '\nDone.'
 
 if __name__ == '__main__':
