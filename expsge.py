@@ -55,7 +55,8 @@ class Experiment:
 			self.name = name
 			self.jobs = []
 
-	def __init__(self):
+	def __init__(self, name):
+		self.name = name
 		self.stages = []
 
 	def stage(self, name):
@@ -105,7 +106,7 @@ class torch(shell):
 
 def init(exp_py):
 	globals_mod = globals().copy()
-	e = Experiment()
+	e = Experiment(os.path.basename(exp_py))
 	globals_mod.update({m : getattr(e, m) for m in dir(e)})
 	exec open(exp_py, 'r').read() in globals_mod, globals_mod
 
@@ -201,9 +202,10 @@ def html(e):
 
 				<div class="col-sm-4 experiment-pane" id="divJob"></div>
 				<script type="text/x-jsrender" id="tmplJob">
-					<h4>stderr</h2>
+					<h1>{{:name}}</h1>
+					<h3>stderr</h3>
 					<pre>{{>stderr}}</pre>
-					<h4>stdout</h4>
+					<h3>stdout</h3>
 					<pre>{{>stdout}}
 				</script>
 			</div>
