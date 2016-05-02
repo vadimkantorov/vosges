@@ -142,7 +142,7 @@ def html(e):
 
 <html>
 	<head>
-		<title>Experiment report</title>
+		<title>Report on %s</title>
 		<meta charset="utf-8">
 		<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css" integrity="sha384-1q8mTJOASx8j1Au+a5WDVnPi2lkFfwwEAa8hDDdjZlpLegxhjVME1fgjWPGmkzs7" crossorigin="anonymous">
 		<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap-theme.min.css" integrity="sha384-fLW2N01lMqjakBkx3l/M9EahuwpSfeNvV63J5ezn3uZzapT0u7EYsXMjQV+0En5r" crossorigin="anonymous">
@@ -235,7 +235,7 @@ def html(e):
 		j['stages'].append({'name' : job_group.name, 'jobs' : jobs})
 			
 	with open(P.html_report, 'w') as f:
-		f.write(HTML_PATTERN % json.dumps(j))
+		f.write(HTML_PATTERN % (e.name, json.dumps(j)))
 
 def gen(e):
 	for job_group in e.stages:
