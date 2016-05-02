@@ -255,10 +255,10 @@ def gen(e):
 			with open(P.sgejobfile(job_group.name, sgejob_idx), 'w') as f:
 				f.write('#$ -N %s_%s\n' % (e.name, job_group.name))
 				f.write('#$ -S /bin/bash\n')
-				f.write('#$ mem_req=%.2fG\n' % job_group.mem_lo_gb)
-				f.write('#$ h_vmem=%.2fG\n' % job_group.mem_hi_gb)
+				f.write('#$ -l mem_req=%.2fG\n' % job_group.mem_lo_gb)
+				f.write('#$ -l h_vmem=%.2fG\n' % job_group.mem_hi_gb)
 				if job_group.queue:
-					f.write('#$ -a %s\n' % job_group.queue)
+					f.write('#$ -q %s\n' % job_group.queue)
 
 				f.write('\n# job_group.name = "%s", job.name = "%s", job_idx = %d\n' % (job_group.name, job.name, job_idx))
 				f.write('/usr/bin/time -v bash -e "%s" > "%s" 2> "%s"' % ((P.jobfile(job_group.name, job_idx), ) + P.logfiles(job_group.name, job_idx)))
