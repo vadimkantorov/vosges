@@ -71,9 +71,9 @@ class Experiment:
 		self.stages[-1].jobs.append(job)
 		
 class path:
-	def __init__(self, string, makedirs = False):
+	def __init__(self, string, mkdirs = False):
 		self.string = string
-		self.makedirs = makedirs
+		self.mkdirs = mkdirs
 
 	def join(self, *args):
 		return path(os.path.join(self.string, *map(str, args)))
@@ -240,9 +240,9 @@ def gen(e):
 				f.write('\necho >&2 "expsge_jobfinished"')
 				f.write('\n\n# end\n')
 
-			for path in map(str, job.get_used_paths()):
-				if path.makedirs == True and not os.path.exists(path):
-					os.makedirs(path)
+			for path in job.get_used_paths():
+				if path.mkdirs == True and not os.path.exists(str(path)):
+					os.makedirs(str(path))
 
 	for job_group in e.stages:
 		for job_idx, job in enumerate(job_group.jobs):
