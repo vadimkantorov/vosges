@@ -232,7 +232,8 @@ def html(e):
 			jobs.append({'name' : job.name, 'stdout' : stdout, 'stderr' : stderr})
 		j['stages'].append({'name' : job_group.name, 'jobs' : jobs})
 			
-	open(P.html_report, 'w').write(HTML_PATTERN % json.dumps(j))
+	with open(P.html_report, 'w') as f:
+		f.write(HTML_PATTERN % json.dumps(j))
 
 def gen(e):
 	for job_group in e.stages:
@@ -254,12 +255,12 @@ def gen(e):
 			with open(P.sgejobfile(job_group.name, sgejob_idx), 'w') as f:
 				f.write('#$ -N %s_%s\n' % (e.name, job_group.name))
 				f.write('#$ -S /bin/bash\n')
-				f.write('#$ mem_req=%.2fG' % job_group.mem_lo_gb)
-				f.write('#$ h_vmem=%.2fG' % job_group.mem_hi_gb)
+				f.write('#$ mem_req=%.2fG\n' % job_group.mem_lo_gb)
+				f.write('#$ h_vmem=%.2fG\n' % job_group.mem_hi_gb)
 				if job_group.queue:
 					f.write('#$ -a %s\n' % job_group.queue)
 
-				f.write('# job_group.name = "%s", job.name = "%s", job_idx = %d\n' % (job_group.name, job.name, job_idx))
+				f.write('\n# job_group.name = "%s", job.name = "%s", job_idx = %d\n' % (job_group.name, job.name, job_idx))
 				f.write('/usr/bin/time -v bash -e "%s" > "%s" 2> "%s"' % ((P.jobfile(job_group.name, job_idx), ) + P.logfiles(job_group.name, job_idx)))
 				f.write('\n# end\n\n')
 
