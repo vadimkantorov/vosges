@@ -41,6 +41,10 @@ class Q:
 	def submit_job(sgejob_file):
 		subprocess.check_call(['qsub', sgejob_file])
 
+	@staticmethod
+	def delete_jobs(jobs):
+		subprocess.check_call(['qdel'] + [elem.getElementsByTagName('JB_job_number')[0].firstChild.data for elem in jobs])
+
 class path:
 	def __init__(self, string, mkdirs = False):
 		self.string = string
@@ -313,11 +317,19 @@ def run(exp_py, dry):
 	wait_if_more_jobs_than(name_prefix, 0)
 	print '\nDone.'
 
+def stop(exp_py):
+	e = init(exp_py)
+	Q.delete_jobs(Q.get_jobs(e.name))
+
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
 	subparsers = parser.add_subparsers()
 	
 	subparsers.add_parser('clean').set_defaults(func = clean)
+
+	cmd = subparsers.add_parser('stop')
+	cmd.set_defaults(func = stop)
+	cmd.add_argument('exp_py')
 
 	cmd = subparsers.add_parser('run')
 	cmd.set_defaults(func = run)
