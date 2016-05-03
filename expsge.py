@@ -11,6 +11,8 @@ import xml.dom.minidom
 class config:
 	maximum_simultaneously_submitted_jobs = 4
 	sleep_between_queue_checks = 2
+	mem_lo_gb = 10
+	mem_hi_gb = 64
 
 class P:
 	html_report = os.getenv('EXPSGE_HTML_REPORT')
@@ -76,8 +78,8 @@ class Experiment:
 		def __init__(self, name, queue):
 			self.name = name
 			self.queue = queue
-			self.mem_lo_gb = 10
-			self.mem_hi_gb = 32
+			self.mem_lo_gb = config.mem_lo_gb
+			self.mem_hi_gb = config.mem_hi_gb
 			self.jobs = []
 
 	def __init__(self, name):
