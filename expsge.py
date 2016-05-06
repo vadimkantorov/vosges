@@ -359,7 +359,7 @@ def html(e):
 			if stdout != None and len(stdout) > config.max_stdout_characters:
 				half = config.max_stdout_characters / 2
 				stdout = stdout[:half] + '\n\n[%d characters skipped]\n\n' % (len(stdout) - 2 * half) + stdout[-half:]
-			jobs.append({'name' : job.name, 'stdout' : stdout, 'stderr' : stderr, 'status' : job.status, 'stats' : None if stats == {} or stats})
+			jobs.append({'name' : job.name, 'stdout' : stdout, 'stderr' : stderr, 'status' : job.status, 'stats' : stats or None})
 		stdout, stderr = sgejoblog(stage, 0), sgejoblog(stage, 1)
 		j['stages'].append({'name' : stage.name, 'jobs' : jobs, 'status' : stage.calculate_aggregate_status(), 'stdout' : stdout, 'stderr' : stderr})
 			
