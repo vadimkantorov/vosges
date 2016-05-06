@@ -295,14 +295,12 @@ def html(e):
 					<table class="table-bordered">
 						<thead>
 							<th>name</th>
-							<th>duration</th>
 							<th>status</th>
 						</thead>
 						<tbody>
 							{{for jobs}}
 							<tr>
 								<td><a href="#{{:#parent.parent.data.name}}/{{:name}}">{{:name}}</a></td>
-								<td>{{:~seconds_to_hhmmss(stats.wall_clock_time_seconds) onError=""}}</td>
 								<td title="{{:status}}" class="job-status-{{:status}}"></td>
 							</tr>
 							{{/for}}
