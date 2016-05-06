@@ -244,8 +244,8 @@ def html(e):
 
 						seconds = Math.round(seconds);
 					    var hours = Math.floor(seconds / (60 * 60));
-					    var divisor_for_minutes = seconds % (60 * 60);
-						return hours + ":" + Math.floor(divisor_for_minutes / 60) + ":" + Math.ceil(divisor_for_minutes % 60);
+					    var divisor_for_minutes = seconds %% (60 * 60);
+						return hours + ":" + Math.floor(divisor_for_minutes / 60) + ":" + Math.ceil(divisor_for_minutes %% 60);
 					},
 				});
 
