@@ -231,7 +231,7 @@ def html(e):
 						var total = 0.0, cnt = 0;
 						for(var i = 0; i < jobs.length; i++)
 						{
-							if(jobs[i].stats != null)
+							if(jobs[i].stats != null && jobs[i].stats.wall_clock_time_seconds != null)
 							{
 								total += jobs[i].stats.wall_clock_time_seconds;
 								cnt++;
@@ -317,7 +317,7 @@ def html(e):
 					<table class="table-striped">
 						{{props stats}}
 						<tr>
-							<th>{{:key}}</th>
+							<th>{{:key}}&nbsp;&nbsp;</th>
 							<td>{{:prop}}</td>
 						</tr>
 						{{else}}
