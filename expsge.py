@@ -1,3 +1,5 @@
+#TODO: fix sgejob_idx to allow complex job <-> sgejob mapping
+
 import os
 import re
 import sys
@@ -203,30 +205,29 @@ def html(e):
 		<script type="text/javascript">
 			var report = %s;
 
-			function show_job(stageName, jobName)
+			function show_job(stage_name, job_name)
 			{
 				$('#divExp').html($('#tmplExp').render(report));
 				for(var i = 0; i < report.stages.length; i++)
 				{
-					if(report.stages[i].name == stageName)
+					if(report.stages[i].name == stage_name)
 					{
+						var details_pane_object = report.stages[i];
 						for(var j = 0; j < report.stages[i].jobs.length; j++)
-						{
-							if(report.stages[i].jobs[j].name == jobName)
-							{
-								$('#divJobs').html($('#tmplJobs').render(report.stages[i]));
-								$('#divJob').html($('#tmplJob').render(report.stages[i].jobs[j]));
-								return;
-							}
-						}
+							if(report.stages[i].jobs[j].name == job_name)
+								details_pane_object = report.stages[i].jobs[j];
+
+						$('#divJobs').html($('#tmplJobs').render(report.stages[i]));
+						$('#divJob').html($('#tmplJob').render(details_pane_object));
+						return;
 					}
 				}
-				alert('Error. Could not find request job.');
+				alert('Error. Could not find requested stage/job.');
 			}
 
 			$(function() {
 				$.views.helpers({
-					average_wall_clock_time_seconds = function(jobs) {
+					average_wall_clock_time_seconds : function(jobs) {
 						var total = 0.0, cnt = 0;
 						for(var i = 0; i < jobs.length; i++)
 						{
@@ -238,7 +239,7 @@ def html(e):
 						}
 						return cnt == 0 ? null : total / cnt;
 					},
-					seconds_to_hhmmss = function(seconds) {
+					seconds_to_hhmmss : function(seconds) {
 						if(seconds == null)
 							return "";
 
@@ -252,7 +253,7 @@ def html(e):
 				$(window).on('hashchange', function() {
 					var re = /(\#[^\/]+)?(\/.+)?/;
 					var groups = re.exec(window.location.hash);
-					show_job(groups[1].substring(1), groups[2].substring(1));
+					show_job(groups[1].substring(1), groups[2] == null ? null : groups[2].substring(1));
 				});
 
 				if(window.location.hash == '')
@@ -278,8 +279,8 @@ def html(e):
 						<tbody>
 							{{for stages}}
 							<tr>
-								<td><a href="#{{:name}}/{{:jobs[0].name}}">{{:name}}</a></td>
-								<td>{{:~seconds_to_hhmmss(average_wall_clock_time_seconds(jobs))}}</td>
+								<td><a href="#{{:name}}">{{:name}}</a></td>
+								<td>{{:~seconds_to_hhmmss(~average_wall_clock_time_seconds(jobs))}}</td>
 								<td title="{{:status}} "class="job-status-{{:status}}"></td>
 							</tr>
 							{{/for}}
@@ -312,13 +313,16 @@ def html(e):
 				<div class="col-sm-4 experiment-pane" id="divJob"></div>
 				<script type="text/x-jsrender" id="tmplJob">
 					<h1>{{:name}}</h1>
-					<h3>time</h3>
-					{{if time_output}}
-					<table class="table">
-						{{props time_output onError="<tr><td>No /usr/bin/time data available</td></tr>"}}
+					<h3>stats</h3>
+					<table class="table-striped">
+						{{props time_output}}
 						<tr>
 							<th>{{:key}}</th>
 							<td>{{:prop}}</td>
+						</tr>
+						{{else}}
+						<tr>
+							<td>No /usr/bin/time data available</td>
 						</tr>
 						{{/props}}
 					</table>
@@ -333,11 +337,14 @@ def html(e):
 </html>
 	'''
 
+	read_or_empty = lambda x: open(x).read() if os.path.exists(x) else ''
+	sgejoblog = lambda stage, k: '\n'.join(['#SGEJOB #%d (%s)\n%s\n\n' % (sgejob_idx, log_file_path, read_or_empty(log_file_path)) for log_file_path in [P.sgejoblogfiles(stage.name, sgejob_idx)[k] for sgejob_idx in range(len(stage.jobs))]])
+
 	j = {'name' : e.name, 'stages' : []}
 	for stage in e.stages:
 		jobs = []
 		for job_idx, job in enumerate(stage.jobs):
-			stdout, stderr = map(lambda x: open(x).read() if os.path.exists(x) else '', P.joblogfiles(stage.name, job_idx))
+			stdout, stderr = map(read_or_empty, P.joblogfiles(stage.name, job_idx))
 			time_output = re.match('time_output = (.+)$', stderr, re.MULTILINE)
 			if time_output != None:
 				time_output = json.loads(time_output.group(1))
@@ -346,7 +353,8 @@ def html(e):
 				half = config.max_stdout_characters / 2
 				stdout = stdout[:half] + '\n\n[%d characters skipped]\n\n' % (len(stdout) - 2 * half) + stdout[-half:]
 			jobs.append({'name' : job.name, 'stdout' : stdout, 'stderr' : stderr, 'status' : job.status, 'time_output' : time_output})
-		j['stages'].append({'name' : stage.name, 'jobs' : jobs, 'status' : stage.calculate_aggregate_status()})
+		stdout, stderr = sgejoblog(stage, 0), sgejoblog(stage, 1)
+		j['stages'].append({'name' : stage.name, 'jobs' : jobs, 'status' : stage.calculate_aggregate_status(), 'stdout' : stdout, 'stderr' : stderr})
 			
 	with open(P.html_report, 'w') as f:
 		f.write(HTML_PATTERN % (e.name, json.dumps(j)))
@@ -387,16 +395,13 @@ def gen(e):
 
 def run(exp_py, dry, verbose):
 	clean()
-
 	e = init(exp_py)
-
 	html(e)
 	gen(e)
 
 	if dry:
 		print 'Dry run. Quitting.'
 		return
-
 
 	def update_status(stage):
 		for job in stage.jobs:
