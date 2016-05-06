@@ -231,9 +231,9 @@ def html(e):
 						var total = 0.0, cnt = 0;
 						for(var i = 0; i < jobs.length; i++)
 						{
-							if(jobs[i].time_output != null)
+							if(jobs[i].stats != null)
 							{
-								total += jobs[i].time_output.wall_clock_time_seconds;
+								total += jobs[i].stats.wall_clock_time_seconds;
 								cnt++;
 							}
 						}
@@ -302,7 +302,7 @@ def html(e):
 							{{for jobs}}
 							<tr>
 								<td><a href="#{{:#parent.parent.data.name}}/{{:name}}">{{:name}}</a></td>
-								<td>{{:~seconds_to_hhmmss(time_output.wall_clock_time_seconds) onError=""}}</td>
+								<td>{{:~seconds_to_hhmmss(stats.wall_clock_time_seconds) onError=""}}</td>
 								<td title="{{:status}}" class="job-status-{{:status}}"></td>
 							</tr>
 							{{/for}}
@@ -315,14 +315,14 @@ def html(e):
 					<h1>{{:name}}</h1>
 					<h3>stats</h3>
 					<table class="table-striped">
-						{{props time_output}}
+						{{props stats}}
 						<tr>
 							<th>{{:key}}</th>
 							<td>{{:prop}}</td>
 						</tr>
 						{{else}}
 						<tr>
-							<td>No /usr/bin/time data available</td>
+							<td>Not available</td>
 						</tr>
 						{{/props}}
 					</table>
@@ -345,14 +345,21 @@ def html(e):
 		jobs = []
 		for job_idx, job in enumerate(stage.jobs):
 			stdout, stderr = map(read_or_empty, P.joblogfiles(stage.name, job_idx))
-			time_output = re.match('time_output = (.+)$', stderr, re.MULTILINE)
-			if time_output != None:
-				time_output = json.loads(time_output.group(1))
+			stats = re.match('time_output = (.+)$', stderr, re.MULTILINE) or {}
+			time_started = re.match('expsge_job_started = (.+)$', stderr, re.MULTILINE)
+			time_finished = re.match('expsge_job_finished = (.+)$', stderr, re.MULTILINE)
+			
+			if stats:
+				stats = json.loads(stats.group(1))
+			if time_started:
+				stats['time_started'] = time_started.group(1)
+			if time_finished:
+				stats['time_finished'] = time_finished.group(1)
 
 			if stdout != None and len(stdout) > config.max_stdout_characters:
 				half = config.max_stdout_characters / 2
 				stdout = stdout[:half] + '\n\n[%d characters skipped]\n\n' % (len(stdout) - 2 * half) + stdout[-half:]
-			jobs.append({'name' : job.name, 'stdout' : stdout, 'stderr' : stderr, 'status' : job.status, 'time_output' : time_output})
+			jobs.append({'name' : job.name, 'stdout' : stdout, 'stderr' : stderr, 'status' : job.status, 'stats' : None if stats == {} or stats})
 		stdout, stderr = sgejoblog(stage, 0), sgejoblog(stage, 1)
 		j['stages'].append({'name' : stage.name, 'jobs' : jobs, 'status' : stage.calculate_aggregate_status(), 'stdout' : stdout, 'stderr' : stderr})
 			
@@ -378,6 +385,7 @@ def gen(e):
 	for stage in e.stages:
 		for job_idx, job in enumerate(stage.jobs):
 			sgejob_idx = job_idx
+			job_stderr_path = P.joblogfiles(stage.name, job_idx)[1]
 			with open(P.sgejobfile(stage.name, sgejob_idx), 'w') as f:
 				f.write('\n'.join([
 					'#$ -N %s_%s' % (e.name, stage.name),
@@ -388,8 +396,9 @@ def gen(e):
 					'#$ -q %s' % stage.queue if stage.queue else '',
 					'',
 					'# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, job.name, job_idx),
-					'echo expsge_job_started > "%s"' % P.joblogfiles(stage.name, job_idx)[1],
+					'echo "expsge_job_started = $(date)" > "%s"' % job_stderr_path,
 					'''/usr/bin/time -f 'time_output = {"command" : "%%C", "exit_code" : %%x, "user_time_seconds" : %%U, "system_time_seconds" : %%U, "wall_clock_time" : "%%E", "wall_clock_time_seconds" : %%e, "max_rss_kbytes" : %%M, "avg_rss_kbytes" : %%t, "major_page_faults" : %%F, "minor_page_faults" : %%R, "inputs" : %%I, "outputs" : %%O, "voluntary_context_switches" : %%w, "involuntary_context_switches" : %%c, "cpu_percentage" : "%%P", "signals_received" : %%k}' bash -e "%s" > "%s" 2>> "%s"''' % ((P.jobfile(stage.name, job_idx), ) + P.joblogfiles(stage.name, job_idx)),
+					'echo "expsge_job_finished = $(date)" >> "%s"' % job_stderr_path,
 					'# end',
 					'']))
 
@@ -473,5 +482,6 @@ if __name__ == '__main__':
 	try:
 		cmd(**args)
 	except KeyboardInterrupt:
-		print 'Quitting (Ctrl+C pressed).'
-		print 'To stop jobs:\texpsge stop "%s"' % args['exp_py']
+		print 'Quitting (Ctrl+C pressed). To stop jobs:'
+		print ''
+		print 'expsge stop "%s"' % args['exp_py']
