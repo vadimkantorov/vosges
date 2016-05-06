@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import time
 import json
 import shutil
@@ -202,7 +203,7 @@ def html(e):
 		<script type="text/javascript">
 			var report = %s;
 
-			function showJob(stageName, jobName)
+			function show_job(stageName, jobName)
 			{
 				$('#divExp').html($('#tmplExp').render(report));
 				for(var i = 0; i < report.stages.length; i++)
@@ -224,10 +225,34 @@ def html(e):
 			}
 
 			$(function() {
+				$.views.helpers({
+					average_wall_clock_time_seconds = function(jobs) {
+						var total = 0.0, cnt = 0;
+						for(var i = 0; i < jobs.length; i++)
+						{
+							if(jobs[i].time_output != null)
+							{
+								total += jobs[i].time_output.wall_clock_time_seconds;
+								cnt++;
+							}
+						}
+						return cnt == 0 ? null : total / cnt;
+					},
+					seconds_to_hhmmss = function(seconds) {
+						if(seconds == null)
+							return "";
+
+						seconds = Math.round(seconds);
+					    var hours = Math.floor(seconds / (60 * 60));
+					    var divisor_for_minutes = seconds % (60 * 60);
+						return hours + ":" + Math.floor(divisor_for_minutes / 60) + ":" + Math.ceil(divisor_for_minutes % 60);
+					},
+				});
+
 				$(window).on('hashchange', function() {
 					var re = /(\#[^\/]+)?(\/.+)?/;
 					var groups = re.exec(window.location.hash);
-					showJob(groups[1].substring(1), groups[2].substring(1));
+					show_job(groups[1].substring(1), groups[2].substring(1));
 				});
 
 				if(window.location.hash == '')
@@ -254,8 +279,8 @@ def html(e):
 							{{for stages}}
 							<tr>
 								<td><a href="#{{:name}}/{{:jobs[0].name}}">{{:name}}</a></td>
-								<td></td>
-								<td class="job-status-{{:status}}"></td>
+								<td>{{:~seconds_to_hhmmss(average_wall_clock_time_seconds(jobs))}}</td>
+								<td title="{{:status}} "class="job-status-{{:status}}"></td>
 							</tr>
 							{{/for}}
 						</tbody>
@@ -276,8 +301,8 @@ def html(e):
 							{{for jobs}}
 							<tr>
 								<td><a href="#{{:#parent.parent.data.name}}/{{:name}}">{{:name}}</a></td>
-								<td>{{:time_output.wall_clock_time onerror=""}}</td>
-								<td class="job-status-{{:status}}"></td>
+								<td>{{:~seconds_to_hhmmss(time_output.wall_clock_time_seconds) onError=""}}</td>
+								<td title="{{:status}}" class="job-status-{{:status}}"></td>
 							</tr>
 							{{/for}}
 						</tbody>
@@ -287,6 +312,16 @@ def html(e):
 				<div class="col-sm-4 experiment-pane" id="divJob"></div>
 				<script type="text/x-jsrender" id="tmplJob">
 					<h1>{{:name}}</h1>
+					<h3>time</h3>
+					{{if time_output}}
+					<table class="table">
+						{{props time_output onError="<tr><td>No /usr/bin/time data available</td></tr>"}}
+						<tr>
+							<th>{{:key}}</th>
+							<td>{{:prop}}</td>
+						</tr>
+						{{/props}}
+					</table>
 					<h3>stderr</h3>
 					<pre>{{>stderr}}</pre>
 					<h3>stdout</h3>
@@ -346,7 +381,7 @@ def gen(e):
 					'',
 					'# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, job.name, job_idx),
 					'echo expsge_job_started > "%s"' % P.joblogfiles(stage.name, job_idx)[1],
-					'''/usr/bin/time -f 'time_output = {"command" : "%%C", "exit_code" : %%x, "user_time_seconds" : %%U, "system_time_seconds" : %%U, "wall_clock_time" : "%%E", "max_rss_kbytes" : %%M, "avg_rss_kbytes" : %%t, "major_page_faults" : %%F, "minor_page_faults" : %%R, "inputs" : %%I, "outputs" : %%O, "voluntary_context_switches" : %%w, "involuntary_context_switches" : %%c, "cpu_percentage" : "%%P", "signals_received" : %%k}' bash -e "%s" > "%s" 2>> "%s"''' % ((P.jobfile(stage.name, job_idx), ) + P.joblogfiles(stage.name, job_idx)),
+					'''/usr/bin/time -f 'time_output = {"command" : "%%C", "exit_code" : %%x, "user_time_seconds" : %%U, "system_time_seconds" : %%U, "wall_clock_time" : "%%E", "wall_clock_time_seconds" : %%e, "max_rss_kbytes" : %%M, "avg_rss_kbytes" : %%t, "major_page_faults" : %%F, "minor_page_faults" : %%R, "inputs" : %%I, "outputs" : %%O, "voluntary_context_switches" : %%w, "involuntary_context_switches" : %%c, "cpu_percentage" : "%%P", "signals_received" : %%k}' bash -e "%s" > "%s" 2>> "%s"''' % ((P.jobfile(stage.name, job_idx), ) + P.joblogfiles(stage.name, job_idx)),
 					'# end',
 					'']))
 
@@ -430,4 +465,8 @@ if __name__ == '__main__':
 	
 	args = vars(parser.parse_args())
 	cmd = args.pop('func')
-	cmd(**args)
+	try:
+		cmd(**args)
+	except KeyboardInterrupt:
+		print 'Quitting (Ctrl+C pressed).'
+		print 'To stop jobs:\texpsge stop "%s"' % args['exp_py']
