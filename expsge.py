@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import json
 import shutil
@@ -90,7 +91,6 @@ class Experiment:
 			self.mem_lo_gb = config.mem_lo_gb
 			self.mem_hi_gb = config.mem_hi_gb
 			self.jobs = []
-			self.status = Experiment.ExecutionStatus.waiting
 
 		def calculate_aggregate_status(self):
 			conditions = {
@@ -104,8 +104,8 @@ class Experiment:
 			
 			for status, extra_statuses in conditions.items():
 				if any([job.status == status for job in self.jobs]) and (extra_statuses == None or all([job.status in [status] + extra_statuses for job in self.jobs])):
-					self.status = status
-					break
+					return status
+			raise Exception('Can not calculate_aggregate_status')
 
 	def __init__(self, name):
 		self.name = name
@@ -247,13 +247,15 @@ def html(e):
 					<table class="table-bordered">
 						<thead>
 							<th>name</th>
+							<th>duration (avg)</th>
 							<th>status</th>
 						</thead>
 						<tbody>
 							{{for stages}}
 							<tr>
 								<td><a href="#{{:name}}/{{:jobs[0].name}}">{{:name}}</a></td>
-								<td style="job-status-{{:status}}"></td>
+								<td></td>
+								<td class="job-status-{{:status}}"></td>
 							</tr>
 							{{/for}}
 						</tbody>
@@ -267,13 +269,15 @@ def html(e):
 					<table class="table-bordered">
 						<thead>
 							<th>name</th>
+							<th>duration</th>
 							<th>status</th>
 						</thead>
 						<tbody>
 							{{for jobs}}
 							<tr>
 								<td><a href="#{{:#parent.parent.data.name}}/{{:name}}">{{:name}}</a></td>
-								<td style="job-status-{{:status}}"></td>
+								<td>{{:time_output.wall_clock_time onerror=""}}</td>
+								<td class="job-status-{{:status}}"></td>
 							</tr>
 							{{/for}}
 						</tbody>
@@ -298,11 +302,15 @@ def html(e):
 	for stage in e.stages:
 		jobs = []
 		for job_idx, job in enumerate(stage.jobs):
-			stdout, stderr = map(lambda x: open(x).read() if os.path.exists(x) else None, P.joblogfiles(stage.name, job_idx))
+			stdout, stderr = map(lambda x: open(x).read() if os.path.exists(x) else '', P.joblogfiles(stage.name, job_idx))
+			time_output = re.match('time_output = (.+)$', stderr, re.MULTILINE)
+			if time_output != None:
+				time_output = json.loads(time_output.group(1))
+
 			if stdout != None and len(stdout) > config.max_stdout_characters:
 				half = config.max_stdout_characters / 2
 				stdout = stdout[:half] + '\n\n[%d characters skipped]\n\n' % (len(stdout) - 2 * half) + stdout[-half:]
-			jobs.append({'name' : job.name, 'stdout' : stdout, 'stderr' : stderr, 'status' : job.status})
+			jobs.append({'name' : job.name, 'stdout' : stdout, 'stderr' : stderr, 'status' : job.status, 'time_output' : time_output})
 		j['stages'].append({'name' : stage.name, 'jobs' : jobs, 'status' : stage.calculate_aggregate_status()})
 			
 	with open(P.html_report, 'w') as f:
@@ -337,8 +345,8 @@ def gen(e):
 					'#$ -q %s' % stage.queue if stage.queue else '',
 					'',
 					'# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, job.name, job_idx),
-					'echo expsge_job_started > "%s"' % P.joblogfiles(stage.name, job_idx)[1]  +
-					'/usr/bin/time -v bash -e "%s" > "%s" 2>> "%s"' % ((P.jobfile(stage.name, job_idx), ) + P.joblogfiles(stage.name, job_idx)),
+					'echo expsge_job_started > "%s"' % P.joblogfiles(stage.name, job_idx)[1],
+					'''/usr/bin/time -f 'time_output = {"command" : "%%C", "exit_code" : %%x, "user_time_seconds" : %%U, "system_time_seconds" : %%U, "wall_clock_time" : "%%E", "max_rss_kbytes" : %%M, "avg_rss_kbytes" : %%t, "major_page_faults" : %%F, "minor_page_faults" : %%R, "inputs" : %%I, "outputs" : %%O, "voluntary_context_switches" : %%w, "involuntary_context_switches" : %%c, "cpu_percentage" : "%%P", "signals_received" : %%k}' bash -e "%s" > "%s" 2>> "%s"''' % ((P.jobfile(stage.name, job_idx), ) + P.joblogfiles(stage.name, job_idx)),
 					'# end',
 					'']))
 
@@ -364,7 +372,7 @@ def run(exp_py, dry, verbose):
 				job.status = Experiment.ExecutionStatus.running
 			if 'Command exited with non-zero status' in stderr:
 				job.status = Experiment.ExecutionStatus.failure
-			if 'Exit status: 0' in stderr:
+			if 'exit_code: 0' in stderr:
 				job.status = Experiment.ExecutionStatus.success
 	
 	def wait_if_more_jobs_than(stage, name_prefix, num_jobs):
