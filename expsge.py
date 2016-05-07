@@ -35,8 +35,7 @@ class P:
 	@staticmethod
 	def init(exp_py):
 		P.exp_py = exp_py
-		exp_code = hashlib.md5(os.path.abspath(exp_py)).hexdigest()[:3].upper()
-		P.experiment_prefix = os.path.basename(exp_py) + '_' + exp_code
+		P.experiment_name_code = os.path.basename(exp_py) + '_' + hashlib.md5(os.path.abspath(exp_py)).hexdigest()[:3].upper()
 		P.experiment_root = os.path.join(P.root, P.experiment_prefix)
 		P.log = os.path.join(P.experiment_root, 'log')
 		P.job = os.path.join(P.experiment_root, 'job')
@@ -117,8 +116,9 @@ class Experiment:
 					return status
 			raise Exception('Can not calculate_aggregate_status')
 
-	def __init__(self, name):
+	def __init__(self, name, name_code):
 		self.name = name
+		self.name_code = name_code
 		self.stages = []
 
 	def stage(self, name, queue = None):
@@ -160,7 +160,7 @@ class torch(bash):
 
 def init():
 	globals_mod = globals().copy()
-	e = Experiment(os.path.basename(P.exp_py))
+	e = Experiment(os.path.basename(P.exp_py), P.experiment_name_prefix)
 	globals_mod.update({m : getattr(e, m) for m in dir(e)})
 	exec open(P.exp_py, 'r').read() in globals_mod, globals_mod
 
@@ -415,7 +415,7 @@ def gen(e):
 			job_stderr_path = P.joblogfiles(stage.name, job_idx)[1]
 			with open(P.sgejobfile(stage.name, sgejob_idx), 'w') as f:
 				f.write('\n'.join([
-					'#$ -N %s_%s' % (e.name, stage.name),
+					'#$ -N %s_%s' % (e.name_code, stage.name),
 					'#$ -S /bin/bash',
 					'#$ -l mem_req=%.2fG' % stage.mem_lo_gb,
 					'#$ -l h_vmem=%.2fG' % stage.mem_hi_gb,
@@ -468,11 +468,11 @@ def run(dry, verbose):
 		for job_idx in range(len(stage.jobs)):
 			#TODO: support multiple jobs per sge job
 			sgejob_idx = job_idx
-			wait_if_more_jobs_than(stage, P.experiment_prefix, config.maximum_simultaneously_submitted_jobs)
+			wait_if_more_jobs_than(stage, e.name_code, config.maximum_simultaneously_submitted_jobs)
 			Q.submit_job(P.sgejobfile(stage.name, sgejob_idx))
 			stage.jobs[job_idx].status = Experiment.ExecutionStatus.submitted
 
-		wait_if_more_jobs_than(stage, P.experiment_prefix, 0)
+		wait_if_more_jobs_than(stage, e.name_code, 0)
 
 		update_status(stage)
 		if e.has_failed_stages():
@@ -483,7 +483,7 @@ def run(dry, verbose):
 	print '\nDone.'
 
 def stop():
-	Q.delete_jobs(Q.get_jobs(P.experiment_prefix))
+	Q.delete_jobs(Q.get_jobs(init().name_code))
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
