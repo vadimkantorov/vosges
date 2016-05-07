@@ -224,7 +224,7 @@ def html(e):
 								details_pane_object = report.stages[i].jobs[j];
 
 						$('#divJobs').html($('#tmplJobs').render(report.stages[i]));
-						$('#divJob').html($('#tmplJob').render(details_pane_object));
+						$('#divJob').html($('#tmplJob').render(details_pane_object, {show_stats : details_pane_object['jobs'] == undefined}));
 						return;
 					}
 				}
@@ -248,7 +248,7 @@ def html(e):
 					format : function(name, value) {
 						var return_name = arguments.length == 1;
 						if(!return_name && value == undefined)
-							return 'N/A';
+							return '';
 
 						if(name.indexOf('seconds') > 0)
 						{
@@ -336,12 +336,14 @@ def html(e):
 				<div class="col-sm-4 experiment-pane" id="divJob"></div>
 				<script type="text/x-jsrender" id="tmplJob">
 					<h1>{{:name}}</h1>
+					{{if ~show_stats}}
 					<h3>stats</h3>
 					<table class="table table-striped">
 						{{for ~stats_keys_reduced ~stats=stats ~row_class="" tmpl="#tmplStats" /}}
 						{{for ~stats_keys_extended ~stats=stats ~row_class="collapse table-stats-extended" tmpl="#tmplStats" /}}
 					</table>
 					<a class="btn btn-info" data-toggle="collapse" data-target=".table-stats-extended">Toggle all stats</a>
+					{{/if}}
 					<h3>stderr</h3>
 					<pre>{{>stderr}}</pre>
 					<h3>stdout</h3>
