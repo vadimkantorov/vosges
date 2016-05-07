@@ -494,21 +494,22 @@ def stop():
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
-	parser.add_argument('exp_py')
 	subparsers = parser.add_subparsers()
 	
-	subparsers.add_parser('stop').set_defaults(func = stop)
+	cmd = subparsers.add_parser('stop')
+	cmd.set_defaults(func = stop)
+	cmd.add_argument('exp_py')
 	
 	cmd = subparsers.add_parser('run')
 	cmd.set_defaults(func = run)
+	cmd.add_argument('exp_py')
 	cmd.add_argument('--dry', action = 'store_true')
 	cmd.add_argument('--verbose', action = 'store_true')
 	
 	args = vars(parser.parse_args())
+	P.init(args.pop('exp_py'))
+	
 	cmd = args.pop('func')
-
-	P.init(args['exp_py'])
-
 	try:
 		cmd(**args)
 	except KeyboardInterrupt:
