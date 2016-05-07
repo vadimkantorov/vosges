@@ -153,7 +153,7 @@ class torch(bash):
 	TORCH_ACTIVATE = os.getenv('EXPSGE_TORCH_ACTIVATE')
 
 	def get_used_paths(self):
-		return [path(torch.TORCH_ACTIVATE)] + shell.get_used_paths(self)
+		return [path(torch.TORCH_ACTIVATE)] + bash.get_used_paths(self)
 
 	def generate_bash_script_lines(self):
 		return ['source "%s"' % torch.TORCH_ACTIVATE, 'th ' + str(self.script_path) + ' ' + self.args]
@@ -391,6 +391,7 @@ def html(e):
 		f.write(HTML_PATTERN % (e.name, json.dumps(j)))
 
 def gen(e):
+	print 'Generating the experiment in "%s"' % P.experiment_root
 	for stage in e.stages:
 		for job_idx, job in enumerate(stage.jobs):
 			with open(P.jobfile(stage.name, job_idx), 'w') as f:
@@ -399,7 +400,7 @@ def gen(e):
 					map(lambda path: '''if [ ! -e "%s" ]; then echo 'File "%s" does not exist'; exit 1; fi''' % (path, path), job.get_used_paths()) +
 					list(itertools.starmap('export {0}="{1}"'.format, sorted(job.env.items()))) +
 					['cd "%s"' % job.cwd] +
-					job.executable.generate_shell_script_lines()
+					job.executable.generate_bash_script_lines()
 				))
 
 			for p in job.get_used_paths():
@@ -427,11 +428,14 @@ def gen(e):
 					'']))
 
 def run(dry, verbose):
-	#clean()
+	clean()
 	e = init()
+	gen(e)
 	html(e)
-	#gen(e)
 
+	if dry:
+		print 'Dry run. Quitting.'
+		return
 
 	def update_status(stage):
 		for job_idx, job in enumerate(stage.jobs):
@@ -445,17 +449,6 @@ def run(dry, verbose):
 			if '"exit_code": 0' in stderr:
 				job.status = Experiment.ExecutionStatus.success
 
-	for stage in e.stages:
-		update_status(stage)
-		if stage.calculate_aggregate_status() == Experiment.ExecutionStatus.failure:
-			e.cancel_stages_after(stage)
-			break
-	html(e)
-
-	if dry:
-		print 'Dry run. Quitting.'
-		return
-	
 	def wait_if_more_jobs_than(stage, job_name_prefix, num_jobs):
 		while len(Q.get_jobs(job_name_prefix)) > num_jobs:
 			msg = 'Running %d jobs, waiting %d jobs.' % (len(Q.get_jobs(job_name_prefix, 'r')), len(Q.get_jobs(job_name_prefix, 'qw')))
