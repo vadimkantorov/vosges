@@ -160,7 +160,7 @@ class torch(bash):
 
 def init():
 	globals_mod = globals().copy()
-	e = Experiment(os.path.basename(P.exp_py), P.experiment_name_prefix)
+	e = Experiment(os.path.basename(P.exp_py), P.experiment_name_code)
 	globals_mod.update({m : getattr(e, m) for m in dir(e)})
 	exec open(P.exp_py, 'r').read() in globals_mod, globals_mod
 
