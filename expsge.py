@@ -36,7 +36,7 @@ class P:
 	def init(exp_py):
 		P.exp_py = exp_py
 		P.experiment_name_code = os.path.basename(exp_py) + '_' + hashlib.md5(os.path.abspath(exp_py)).hexdigest()[:3].upper()
-		P.experiment_root = os.path.join(P.root, P.experiment_prefix)
+		P.experiment_root = os.path.join(P.root, P.experiment_name_code)
 		P.log = os.path.join(P.experiment_root, 'log')
 		P.job = os.path.join(P.experiment_root, 'job')
 		P.sgejob = os.path.join(P.experiment_root, 'sgejob')
