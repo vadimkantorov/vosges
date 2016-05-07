@@ -34,13 +34,14 @@ class P:
 
 	@staticmethod
 	def init(exp_py):
+		P.exp_py = exp_py
 		exp_code = hashlib.md5(os.path.abspath(exp_py)).hexdigest()[:3].upper()
 		P.experiment_prefix = os.path.basename(exp_py) + '_' + exp_code
-		experiment_root = os.path.join(P.root, experiment_prefix)
-		P.log = os.path.join(experiment_root, 'log')
-		P.job = os.path.join(experiment_root, 'job')
-		P.sgejob = os.path.join(experiment_root, 'sgejob')
-		P.all_dirs = [experiment_root, log, job, sgejob]
+		P.experiment_root = os.path.join(P.root, P.experiment_prefix)
+		P.log = os.path.join(P.experiment_root, 'log')
+		P.job = os.path.join(P.experiment_root, 'job')
+		P.sgejob = os.path.join(P.experiment_root, 'sgejob')
+		P.all_dirs = [P.root, P.experiment_root, P.log, P.job, P.sgejob]
 
 class Q:
 	@staticmethod
@@ -161,7 +162,7 @@ def init():
 	globals_mod = globals().copy()
 	e = Experiment(os.path.basename(P.exp_py))
 	globals_mod.update({m : getattr(e, m) for m in dir(e)})
-	exec open(exp_py, 'r').read() in globals_mod, globals_mod
+	exec open(P.exp_py, 'r').read() in globals_mod, globals_mod
 
 	def makedirs_if_does_not_exist(d):
 		if not os.path.exists(d):
@@ -178,8 +179,8 @@ def init():
 	return e
 
 def clean():
-	if os.path.exists(P.root):
-		shutil.rmtree(P.root)
+	if os.path.exists(P.experiment_root):
+		shutil.rmtree(P.experiment_root)
 
 def html(e):
 	HTML_PATTERN = '''
@@ -245,17 +246,15 @@ def html(e):
 						return cnt == 0 ? undefined : total / cnt;
 					},
 					format : function(name, value) {
-						var undefined_formatted = 'N/A';
 						var return_name = arguments.length == 1;
-						var return_undefined_formatted = value == undefined;
+						if(!return_name && value == undefined)
+							return 'N/A';
 
 						if(name.indexOf('seconds') > 0)
 						{
 							name = name + ' (h:m:s)'
 							if(return_name)
 								return name;
-							if(return_undefined_formatted)
-								return undefined_formatted;
 
 							var seconds = Math.round(value);
 							var hours = Math.floor(seconds / (60 * 60));
@@ -267,11 +266,10 @@ def html(e):
 							name = name + ' (Gb)'
 							if(return_name)
 								return name;
-							if(return_undefined_formatted)
-								return undefined_formatted;
+
 							return (value / 1024 / 1024).toFixed(1);
 						}
-						return return_name ? name : return_undefined_formatted ? undefined_formatted : value;
+						return return_name ? name : value;
 					},
 					stats_keys_reduced : ['exit_code', 'wall_clock_time_seconds'],
 					stats_keys_extended : ['time_started', 'time_finished', 'user_time_seconds', 'system_time_seconds', 'max_rss_kbytes', 'avg_rss_kbytes', 'major_page_faults', 'minor_page_faults', 'voluntary_context_switches', 'involuntary_context_switches', 'inputs', 'outputs', 'signals_received', 'cpu_percentage', 'stdout_path', 'stderr_path']
@@ -387,7 +385,7 @@ def html(e):
 				stdout = stdout[:half] + '\n\n[%d characters skipped]\n\n' % (len(stdout) - 2 * half) + stdout[-half:]
 			jobs.append({'name' : job.name, 'stdout' : stdout, 'stderr' : stderr, 'status' : job.status, 'stats' : stats})
 		stdout, stderr = sgejoblog(stage, 0), sgejoblog(stage, 1)
-		j['stages'].append({'name' : stage.name, 'jobs' : jobs, 'status' : stage.calculate_aggregate_status(), 'stdout' : stdout, 'stderr' : stderr})
+		j['stages'].append({'name' : stage.name, 'jobs' : jobs, 'status' : stage.calculate_aggregate_status(), 'stdout' : stdout, 'stderr' : stderr, 'stats' : {}})
 			
 	with open(P.html_report, 'w') as f:
 		f.write(HTML_PATTERN % (e.name, json.dumps(j)))
