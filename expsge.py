@@ -269,7 +269,7 @@ def html(e):
 
 							return (value / 1024 / 1024).toFixed(1);
 						}
-						return return_name ? name : value;
+						return String(return_name ? name : value);
 					},
 					stats_keys_reduced : ['exit_code', 'wall_clock_time_seconds'],
 					stats_keys_extended : ['time_started', 'time_finished', 'user_time_seconds', 'system_time_seconds', 'max_rss_kbytes', 'avg_rss_kbytes', 'major_page_faults', 'minor_page_faults', 'voluntary_context_switches', 'involuntary_context_switches', 'inputs', 'outputs', 'signals_received', 'cpu_percentage', 'stdout_path', 'stderr_path']
@@ -353,7 +353,7 @@ def html(e):
 				<script type="text/x-jsrender" id="tmplStats">
 					<tr class="{{:~row_class}}">
 						<th>{{:~format(#data)}}</th>
-						<td>{{:~format(#data, ~stats[#data])}}</td>
+						<td>{{:~format(#data, ~stats[#data]) || "N/A"}}</td>
 					</tr>
 				</script>
 			</div>
@@ -500,12 +500,11 @@ if __name__ == '__main__':
 	cmd.add_argument('--verbose', action = 'store_true')
 	
 	args = vars(parser.parse_args())
-	P.init(args.pop('exp_py'))
-	
-	cmd = args.pop('func')
+	exp_py, cmd = args.pop('exp_py'), args.pop('func')
+	P.init(exp_py)
 	try:
 		cmd(**args)
 	except KeyboardInterrupt:
 		print 'Quitting (Ctrl+C pressed). To stop jobs:'
 		print ''
-		print 'expsge stop "%s"' % args['exp_py']
+		print 'expsge stop "%s"' % exp_py
