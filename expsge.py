@@ -20,9 +20,6 @@ class config:
 	max_stdout_characters = 1024
 
 class P:
-	html_report = os.getenv('EXPSGE_HTML_REPORT')
-	root = os.getenv('EXPSGE_ROOT')
-
 	jobdir = staticmethod(lambda stage_name: os.path.join(P.job, stage_name))
 	logdir = staticmethod(lambda stage_name: os.path.join(P.log, stage_name))
 	sgejobdir = staticmethod(lambda stage_name: os.path.join(P.sgejob, stage_name))
@@ -30,16 +27,22 @@ class P:
 	joblogfiles = staticmethod(lambda stage_name, job_idx: (os.path.join(P.logdir(stage_name), 'stdout_j%06d.txt' % job_idx), os.path.join(P.logdir(stage_name), 'stderr_j%06d.txt' % job_idx)))
 	sgejobfile = staticmethod(lambda stage_name, sgejob_idx: os.path.join(P.sgejobdir(stage_name), 's%06d.sh' % sgejob_idx))
 	sgejoblogfiles = staticmethod(lambda stage_name, sgejob_idx: (os.path.join(P.logdir(stage_name), 'stdout_s%06d.txt' % sgejob_idx), os.path.join(P.logdir(stage_name), 'stderr_s%06d.txt' % sgejob_idx)))
-	jsonfile = staticmethod(lambda : os.path.join(P.json, 'expsgejob.json'))
 
 	@staticmethod
-	def init(exp_py):
+	def init(exp_py, root, htmlroot = None, htmlrootalias = None):
 		P.exp_py = exp_py
-		P.experiment_name_code = os.path.basename(exp_py) + '_' + hashlib.md5(os.path.abspath(exp_py)).hexdigest()[:3].upper()
+		P.experiment_name_code = os.path.basename(P.exp_py) + '_' + hashlib.md5(os.path.abspath(P.exp_py)).hexdigest()[:3].upper()
+		
+		P.root = os.path.abspath(root)
+		P.html_root = htmlroot or getattr(config, 'htmlroot') or os.path.join(P.root, 'html')
+		P.html_root_alias = htmlrootalias or getattr(config, 'htmlrootalias')
+		P.html_report_file_name = P.experiment_name_code + '.html'
+		P.html_report = os.path.join(P.html_root, P.html_report_file_name)
+
 		P.experiment_root = os.path.join(P.root, P.experiment_name_code)
 		P.log = os.path.join(P.experiment_root, 'log')
 		P.job = os.path.join(P.experiment_root, 'job')
-		P.sgejob = os.path.join(P.experiment_root, 'sgejob')
+		P.sgejob = os.path.join(P.experiment_root, 'sge')
 		P.all_dirs = [P.root, P.experiment_root, P.log, P.job, P.sgejob]
 
 class Q:
@@ -149,15 +152,6 @@ class bash:
 	def generate_bash_script_lines(self):
 		return [str(self.script_path) + ' ' + self.args]
 
-class torch(bash):
-	TORCH_ACTIVATE = os.getenv('EXPSGE_TORCH_ACTIVATE')
-
-	def get_used_paths(self):
-		return [path(torch.TORCH_ACTIVATE)] + bash.get_used_paths(self)
-
-	def generate_bash_script_lines(self):
-		return ['source "%s"' % torch.TORCH_ACTIVATE, 'th ' + str(self.script_path) + ' ' + self.args]
-
 def init():
 	globals_mod = globals().copy()
 	e = Experiment(os.path.basename(P.exp_py), P.experiment_name_code)
@@ -188,7 +182,7 @@ def html(e):
 
 <html>
 	<head>
-		<title>Report on %s</title>
+		<title>%s</title>
 		<meta charset="utf-8" />
 		<meta http-equiv="cache-control" content="no-cache" />
 		<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css" integrity="sha384-1q8mTJOASx8j1Au+a5WDVnPi2lkFfwwEAa8hDDdjZlpLegxhjVME1fgjWPGmkzs7" crossorigin="anonymous">
@@ -213,38 +207,36 @@ def html(e):
 
 			function show_job(stage_name, job_name)
 			{
+				var stats_keys_reduced_experiment = ['name_code', 'experiment_root', 'html_root', 'argv_joined'];
+				var stats_keys_reduced_stage = ['mem_lo_gb', 'mem_hi_gb'];
+				var stats_keys_reduced_job = ['exit_code', 'wall_clock_time_seconds'];
+				var stats_keys_extended_job = ['time_started', 'time_finished', 'user_time_seconds', 'system_time_seconds', 'max_rss_kbytes', 'avg_rss_kbytes', 'major_page_faults', 'minor_page_faults', 'voluntary_context_switches', 'involuntary_context_switches', 'inputs', 'outputs', 'signals_received', 'cpu_percentage', 'stdout_path', 'stderr_path'];
+
 				$('#divExp').html($('#tmplExp').render(report));
 				for(var i = 0; i < report.stages.length; i++)
 				{
-					if(report.stages[i].name == stage_name)
+					if('#' + report.stages[i].name == stage_name)
 					{
-						var details_pane_object = report.stages[i];
-						for(var j = 0; j < report.stages[i].jobs.length; j++)
-							if(report.stages[i].jobs[j].name == job_name)
-								details_pane_object = report.stages[i].jobs[j];
-
 						$('#divJobs').html($('#tmplJobs').render(report.stages[i]));
-						$('#divJob').html($('#tmplJob').render(details_pane_object, {show_stats : details_pane_object['jobs'] == undefined}));
+						for(var j = 0; j < report.stages[i].jobs.length; j++)
+						{
+							if('/' + report.stages[i].jobs[j].name == job_name)
+							{
+								$('#divDetails').html($('#tmplDetails').render(report.stages[i].jobs[j], {header : report.stages[i].jobs[j].name, stats_keys_reduced : stats_keys_reduced_job, stats_keys_extended : stats_keys_extended_job}));
+								return;
+							}
+						}
+
+						$('#divDetails').html($('#tmplDetails').render(report.stages[i], {stats_keys_reduced : stats_keys_reduced_stage}));
 						return;
 					}
 				}
-				alert('Error. Could not find requested stage/job.');
+				$('#divJobs').html('');
+				$('#divDetails').html($('#tmplDetails').render(report, {show_logs : false, stats_keys_reduced : stats_keys_reduced_experiment}))
 			}
 
 			$(function() {
 				$.views.helpers({
-					average_wall_clock_time_seconds : function(jobs) {
-						var total = 0.0, cnt = 0;
-						for(var i = 0; i < jobs.length; i++)
-						{
-							if(jobs[i].stats.wall_clock_time_seconds != null)
-							{
-								total += jobs[i].stats.wall_clock_time_seconds;
-								cnt++;
-							}
-						}
-						return cnt == 0 ? undefined : total / cnt;
-					},
 					format : function(name, value) {
 						var return_name = arguments.length == 1;
 						if(!return_name && value == undefined)
@@ -270,21 +262,14 @@ def html(e):
 							return (value / 1024 / 1024).toFixed(1);
 						}
 						return String(return_name ? name : value);
-					},
-					stats_keys_reduced : ['exit_code', 'wall_clock_time_seconds'],
-					stats_keys_extended : ['time_started', 'time_finished', 'user_time_seconds', 'system_time_seconds', 'max_rss_kbytes', 'avg_rss_kbytes', 'major_page_faults', 'minor_page_faults', 'voluntary_context_switches', 'involuntary_context_switches', 'inputs', 'outputs', 'signals_received', 'cpu_percentage', 'stdout_path', 'stderr_path']
+					}
 				});
 
 				$(window).on('hashchange', function() {
 					var re = /(\#[^\/]+)?(\/.+)?/;
 					var groups = re.exec(window.location.hash);
-					show_job(groups[1].substring(1), groups[2] == null ? null : groups[2].substring(1));
-				});
-
-				if(window.location.hash == '')
-					window.location.hash = '#' + report.stages[0].name + '/' + report.stages[0].jobs[0].name;
-				else
-					$(window).trigger('hashchange');
+					show_job(groups[1], groups[2]);
+				}).trigger('hashchange');
 			});
 
 		</script>
@@ -293,20 +278,18 @@ def html(e):
 			<div class="row">
 				<div class="col-sm-4 experiment-pane" id="divExp"></div>
 				<script type="text/x-jsrender" id="tmplExp">
-					<h1><a href="#{{:stages[0].name}}/{{:stages[0].jobs[0].name}}">{{:name}}</a></h1>
+					<h1><a href="#">{{>name}}</a></h1>
 					<h3>stages</h3>
-					<table class="table-bordered">
+					<table class="table table-bordered">
 						<thead>
 							<th>name</th>
-							<th>duration (avg)</th>
 							<th>status</th>
 						</thead>
 						<tbody>
 							{{for stages}}
 							<tr>
-								<td><a href="#{{:name}}">{{:name}}</a></td>
-								<td>{{:~format("average_wall_clock_time_seconds", ~average_wall_clock_time_seconds(jobs))}}</td>
-								<td title="{{:status}} "class="job-status-{{:status}}"></td>
+								<td><a href="#{{>name}}">{{>name}}</a></td>
+								<td title="{{>status}}" class="job-status-{{>status}}"></td>
 							</tr>
 							{{/for}}
 						</tbody>
@@ -315,9 +298,9 @@ def html(e):
 
 				<div class="col-sm-4 experiment-pane" id="divJobs"></div>
 				<script type="text/x-jsrender" id="tmplJobs">
-					<h1>{{:name}}</h1>
+					<h1>{{>name}}</h1>
 					<h3>jobs</h3>
-					<table class="table-bordered">
+					<table class="table table-bordered">
 						<thead>
 							<th>name</th>
 							<th>status</th>
@@ -325,35 +308,52 @@ def html(e):
 						<tbody>
 							{{for jobs}}
 							<tr>
-								<td><a href="#{{:#parent.parent.data.name}}/{{:name}}">{{:name}}</a></td>
-								<td title="{{:status}}" class="job-status-{{:status}}"></td>
+								<td><a href="#{{>#parent.parent.data.name}}/{{>name}}">{{>name}}</a></td>
+								<td title="{{>status}}" class="job-status-{{>status}}"></td>
 							</tr>
 							{{/for}}
 						</tbody>
 					</table>
 				</script>
 
-				<div class="col-sm-4 experiment-pane" id="divJob"></div>
-				<script type="text/x-jsrender" id="tmplJob">
-					<h1>{{:name}}</h1>
-					{{if ~show_stats}}
+				<div class="col-sm-4 experiment-pane" id="divDetails"></div>
+				<script type="text/x-jsrender" id="tmplDetails">
+					<h1>{{>~header}}&nbsp;</h1>
 					<h3>stats</h3>
 					<table class="table table-striped">
 						{{for ~stats_keys_reduced ~stats=stats ~row_class="" tmpl="#tmplStats" /}}
 						{{for ~stats_keys_extended ~stats=stats ~row_class="collapse table-stats-extended" tmpl="#tmplStats" /}}
 					</table>
+					{{if ~stats_keys_extended}}
 					<a class="btn btn-info" data-toggle="collapse" data-target=".table-stats-extended">Toggle all stats</a>
 					{{/if}}
+					{{if ~show_logs != false}}
+					<h3>stdout</h3>
+					<pre>{{>stdout}}</pre>
 					<h3>stderr</h3>
 					<pre>{{>stderr}}</pre>
-					<h3>stdout</h3>
-					<pre>{{>stdout}}
+					{{/if}}
+					{{if env}}
+					<h3>env</h3>
+					<table class="table table-striped">
+						{{props env}}
+						<tr>
+							<th>{{>key}}</th>
+							<td>{{>prop}}</td>
+						</tr>
+						{{else}}
+						<tr>
+							<td>No environment variables were passed</td>
+						</tr>
+						{{/props}}
+					</table>
+					{{/if}}
 				</script>
 				
 				<script type="text/x-jsrender" id="tmplStats">
-					<tr class="{{:~row_class}}">
-						<th>{{:~format(#data)}}</th>
-						<td>{{:~format(#data, ~stats[#data]) || "N/A"}}</td>
+					<tr class="{{>~row_class}}">
+						<th>{{>~format(#data)}}</th>
+						<td>{{>~format(#data, ~stats[#data]) || "N/A"}}</td>
 					</tr>
 				</script>
 			</div>
@@ -365,7 +365,8 @@ def html(e):
 	read_or_empty = lambda x: open(x).read() if os.path.exists(x) else ''
 	sgejoblog = lambda stage, k: '\n'.join(['#SGEJOB #%d (%s)\n%s\n\n' % (sgejob_idx, log_file_path, read_or_empty(log_file_path)) for log_file_path in [P.sgejoblogfiles(stage.name, sgejob_idx)[k] for sgejob_idx in range(len(stage.jobs))]])
 
-	j = {'name' : e.name, 'stages' : []}
+	j = {'name' : e.name, 'stages' : [], 'stats' : {'experiment_root' : P.experiment_root, 'name_code' : e.name_code, 'html_root' : P.html_root, 'argv_joined' : ' '.join(['"%s"' % arg if ' ' in arg else arg for arg in sys.argv])}}
+	j['stats'].update({k : v for k, v in config.__dict__.items() if '__' not in k})
 	for stage in e.stages:
 		jobs = []
 		for job_idx, job in enumerate(stage.jobs):
@@ -376,7 +377,7 @@ def html(e):
 			time_started = re.search('expsge_job_started = (.+)$', stderr, re.MULTILINE)
 			time_finished = re.search('expsge_job_finished = (.+)$', stderr, re.MULTILINE)
 			if time_output:
-				stats.update(json.loads(stats.group(1)))
+				stats.update(json.loads(time_output.group(1)))
 			if time_started:
 				stats['time_started'] = time_started.group(1)
 			if time_finished:
@@ -385,12 +386,12 @@ def html(e):
 			if stdout != None and len(stdout) > config.max_stdout_characters:
 				half = config.max_stdout_characters / 2
 				stdout = stdout[:half] + '\n\n[%d characters skipped]\n\n' % (len(stdout) - 2 * half) + stdout[-half:]
-			jobs.append({'name' : job.name, 'stdout' : stdout, 'stderr' : stderr, 'status' : job.status, 'stats' : stats})
+			jobs.append({'name' : job.name, 'stdout' : stdout, 'stderr' : stderr, 'status' : job.status, 'stats' : stats, 'env' : {k : str(v) for k, v in job.env.items()}})
 		stdout, stderr = sgejoblog(stage, 0), sgejoblog(stage, 1)
-		j['stages'].append({'name' : stage.name, 'jobs' : jobs, 'status' : stage.calculate_aggregate_status(), 'stdout' : stdout, 'stderr' : stderr, 'stats' : {}})
+		j['stages'].append({'name' : stage.name, 'jobs' : jobs, 'status' : stage.calculate_aggregate_status(), 'stdout' : stdout, 'stderr' : stderr, 'stats' : {'mem_lo_gb' : stage.mem_lo_gb, 'mem_hi_gb' : stage.mem_hi_gb}})
 			
 	with open(P.html_report, 'w') as f:
-		f.write(HTML_PATTERN % (e.name, json.dumps(j)))
+		f.write(HTML_PATTERN % (e.name_code, json.dumps(j)))
 
 def gen(e):
 	print 'Generating the experiment in "%s"' % P.experiment_root
@@ -433,6 +434,12 @@ def run(dry, verbose):
 	clean()
 	e = init()
 	gen(e)
+
+	print 'The report is available at%s:' % (' (provided --htmlrootalias used)' if P.html_root_alias else '')
+	print ''
+	print os.path.join(P.html_root_alias or P.html_root, P.html_report_file_name)
+	print ''
+
 	html(e)
 
 	if dry:
@@ -466,7 +473,6 @@ def run(dry, verbose):
 	for stage_idx, stage in enumerate(e.stages):
 		print 'Starting stage #%d [%s], with %d jobs.' % (stage_idx, stage.name, len(stage.jobs))
 		for job_idx in range(len(stage.jobs)):
-			#TODO: support multiple jobs per sge job
 			sgejob_idx = job_idx
 			wait_if_more_jobs_than(stage, e.name_code, config.maximum_simultaneously_submitted_jobs)
 			Q.submit_job(P.sgejobfile(stage.name, sgejob_idx))
@@ -487,6 +493,10 @@ def stop():
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
+	parser.add_argument('--root', default = 'expsge')
+	parser.add_argument('--htmlroot')
+	parser.add_argument('--htmlrootalias')
+	parser.add_argument('--rcfile', default = os.path.expanduser('~/.expsgerc'))
 	subparsers = parser.add_subparsers()
 	
 	cmd = subparsers.add_parser('stop')
@@ -500,11 +510,14 @@ if __name__ == '__main__':
 	cmd.add_argument('--verbose', action = 'store_true')
 	
 	args = vars(parser.parse_args())
-	exp_py, cmd = args.pop('exp_py'), args.pop('func')
-	P.init(exp_py)
+	rcfile, cmd = args.pop('rcfile'), args.pop('func')
+	if os.path.exists(rcfile):
+		exec open(rcfile).read() in globals(), globals()
+	P.init(args.pop('exp_py'), args.pop('root'), args.pop('htmlroot'), args.pop('htmlrootalias'))
+	
 	try:
 		cmd(**args)
 	except KeyboardInterrupt:
 		print 'Quitting (Ctrl+C pressed). To stop jobs:'
 		print ''
-		print 'expsge stop "%s"' % exp_py
+		print 'expsge stop "%s"' % P.exp_py
