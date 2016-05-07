@@ -34,7 +34,7 @@ class P:
 
 	@staticmethod
 	def init(exp_py):
-		exp_code = md5.new(os.path.abspath(exp_py)).hexdigest()[:3].upper()
+		exp_code = hashlib.md5(os.path.abspath(exp_py)).hexdigest()[:3].upper()
 		P.experiment_prefix = os.path.basename(exp_py) + '_' + exp_code
 		experiment_root = os.path.join(P.root, experiment_prefix)
 		P.log = os.path.join(experiment_root, 'log')
