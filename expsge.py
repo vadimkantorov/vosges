@@ -309,7 +309,7 @@ def html(e):
 
 				<div class="col-sm-4 experiment-pane" id="divJobs"></div>
 				<script type="text/x-jsrender" id="tmplJobs">
-					<h1>{{>name}}</h1>
+					<h1><a href="#{{>name}}"{{>name}}</a></h1>
 					<h3>jobs</h3>
 					<table class="table table-bordered">
 						<thead>
