@@ -2,6 +2,7 @@
 #TODO: nice console output (with ok-failed wigwam-styled messages with stage times)
 #TODO: duplicate console output in experiment stdout
 #TODO: http post when a job is failed / canceled
+#TODO: refactor cmd line args <-> config
 
 import os
 import re
@@ -126,6 +127,9 @@ class Experiment:
 
 		def job_batch_count(self):
 			return int(math.ceil(float(len(self.jobs)) / self.job_batch_size))
+
+		def calculate_job_range(self, batch_idx):
+			return range(batch_idx * self.job_batch_size, min(len(self.jobs), (batch_idx + 1) * self.job_batch_size))
 
 	def __init__(self, name, name_code):
 		self.name = name
@@ -430,7 +434,6 @@ def gen(e = None, locally = None):
 				f.write('\n'.join(['#! /bin/bash'] + generate_job_bash_script_lines(stage, job, job_idx)))
 
 	for stage in e.stages:
-		job_idx = 0
 		for sgejob_idx in range(stage.job_batch_count()):
 			with open(P.sgejobfile(stage.name, sgejob_idx), 'w') as f:
 				f.write('\n'.join([
@@ -443,17 +446,16 @@ def gen(e = None, locally = None):
 					''
 				]))
 
-				while job_idx < len(stage.jobs) and job_idx < (sgejob_idx + 1) * stage.job_batch_size:
+				for job_idx in stage.calculate_job_range(sgejob_idx):
 					job_stderr_path = P.joblogfiles(stage.name, job_idx)[1]
 					f.write('\n'.join([
-						'# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, job.name, job_idx),
+						'# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, stage.jobs[job_idx].name, job_idx),
 						'echo "%%expsge job_started = $(date +"%s")" > "%s"' % (config.time_format, job_stderr_path),
 						'''/usr/bin/time -f '%%%%expsge usrbintime_output = {"exit_code" : %%x, "time_user_seconds" : %%U, "time_system_seconds" : %%S, "time_wall_clock_seconds" : %%e, "rss_max_kbytes" : %%M, "rss_avg_kbytes" : %%t, "page_faults_major" : %%F, "page_faults_minor" : %%R, "io_inputs" : %%I, "io_outputs" : %%O, "context_switches_voluntary" : %%w, "context_switches_involuntary" : %%c, "cpu_percentage" : "%%P", "signals_received" : %%k}' bash -e "%s" > "%s" 2>> "%s"''' % ((P.jobfile(stage.name, job_idx), ) + P.joblogfiles(stage.name, job_idx)),
 						'echo "%%expsge job_finished = $(date +"%s")" >> "%s"' % (config.time_format, job_stderr_path),
 						'# end',
 						''
 					]))
-					job_idx += 1
 
 def run(dry, verbose):
 	clean()
@@ -502,7 +504,8 @@ def run(dry, verbose):
 		for sgejob_idx in range(stage.job_batch_count()):
 			wait_if_more_jobs_than(stage, e.name_code, config.maximum_simultaneously_submitted_jobs)
 			Q.submit_job(P.sgejobfile(stage.name, sgejob_idx))
-			stage.jobs[job_idx].status = Experiment.ExecutionStatus.submitted
+			for job_idx in stage.calculate_job_range(sgejob_idx):
+				stage.jobs[job_idx].status = Experiment.ExecutionStatus.submitted
 
 		wait_if_more_jobs_than(stage, e.name_code, 0)
 
