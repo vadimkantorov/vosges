@@ -35,9 +35,9 @@ class P:
 		P.exp_py = exp_py
 		P.experiment_name_code = os.path.basename(P.exp_py) + '_' + hashlib.md5(os.path.abspath(P.exp_py)).hexdigest()[:3].upper()
 		
-		P.root = os.path.abspath(root or getattr(config, 'root'))
-		P.html_root = htmlroot or getattr(config, 'htmlroot') or os.path.join(P.root, 'html')
-		P.html_root_alias = htmlrootalias or getattr(config, 'htmlrootalias')
+		P.root = os.path.abspath(getattr(config, 'root') or root)
+		P.html_root = getattr(config, 'htmlroot') or htmlroot or os.path.join(P.root, 'html')
+		P.html_root_alias = getattr(config, 'htmlrootalias') or htmlrootalias
 		P.html_report_file_name = P.experiment_name_code + '.html'
 		P.html_report = os.path.join(P.html_root, P.html_report_file_name)
 
