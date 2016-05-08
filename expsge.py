@@ -372,7 +372,7 @@ def html(e):
 	time_finished = re.search('expsge_exp_finished = (.+)$', stderr, re.MULTILINE)
 
 	j = {'name' : e.name, 'stages' : [], 'stats' : {'time_started' : time_started.group(1) if time_started else None, 'time_finished' : time_finished.group(1) if time_finished else None, 'stdout_path' : stdout_path, 'stderr_path' : stderr_path, 'experiment_root' : P.experiment_root, 'name_code' : e.name_code, 'html_root' : P.html_root, 'argv_joined' : ' '.join(['"%s"' % arg if ' ' in arg else arg for arg in sys.argv])}, 'stdout' : stdout, 'stderr' : stderr}
-	j['stats'].update({k : v for k, v in config.__dict__.items() if '__' not in k})
+	j['stats'].update({'config.' + k : v for k, v in config.__dict__.items() if '__' not in k})
 	for stage in e.stages:
 		jobs = []
 		for job_idx, job in enumerate(stage.jobs):
