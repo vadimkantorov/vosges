@@ -1,6 +1,7 @@
 #TODO: fix sgejob_idx to allow complex job <-> sgejob mapping
 #TODO: remember job ids, check if jobs were killed
 #TODO: nice console output (with ok-failed wigwam-styled messages with stage times)
+#TODO: duplicate console output in experiment stdout
 #TODO: http post when a job is failed / canceled
 
 import os
@@ -249,7 +250,7 @@ def html(e):
 					var groups = re.exec(window.location.hash);
 					var stage_name = groups[1], job_name = groups[2];
 
-					var stats_keys_reduced_experiment = ['name_code', 'time_started', 'time_finished'];
+					var stats_keys_reduced_experiment = ['name_code', 'time_started', 'time_finished', 'time_updated'];
 					var stats_keys_reduced_stage = ['time_wall_clock_avg_seconds'];
 					var stats_keys_reduced_job = ['exit_code', 'time_wall_clock_seconds'];
 
@@ -375,7 +376,7 @@ def html(e):
 	time_started = re.search('%expsge exp_started = (.+)$', stderr, re.MULTILINE)
 	time_finished = re.search('%expsge exp_finished = (.+)$', stderr, re.MULTILINE)
 
-	j = {'name' : e.name, 'stages' : [], 'stats' : {'time_started' : time_started.group(1) if time_started else None, 'time_finished' : time_finished.group(1) if time_finished else None, 'stdout_path' : stdout_path, 'stderr_path' : stderr_path, 'experiment_root' : P.experiment_root, 'name_code' : e.name_code, 'html_root' : P.html_root, 'argv_joined' : ' '.join(['"%s"' % arg if ' ' in arg else arg for arg in sys.argv])}, 'stdout' : stdout, 'stderr' : stderr}
+	j = {'name' : e.name, 'stages' : [], 'stats' : {'time_started' : time_started.group(1) if time_started else None, 'time_finished' : time_finished.group(1) if time_finished else None, 'time_updated' : time.strftim(config.time_format), 'stdout_path' : stdout_path, 'stderr_path' : stderr_path, 'experiment_root' : P.experiment_root, 'name_code' : e.name_code, 'html_root' : P.html_root, 'argv_joined' : ' '.join(['"%s"' % arg if ' ' in arg else arg for arg in sys.argv])}, 'stdout' : stdout, 'stderr' : stderr}
 	j['stats'].update({'config.' + k : v for k, v in config.__dict__.items() if '__' not in k})
 	for stage in e.stages:
 		jobs = []
