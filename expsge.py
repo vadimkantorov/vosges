@@ -1,4 +1,3 @@
-#TODO: fix sgejob_idx to allow complex job <-> sgejob mapping
 #TODO: remember job ids, check if jobs were killed
 #TODO: nice console output (with ok-failed wigwam-styled messages with stage times)
 #TODO: duplicate console output in experiment stdout
@@ -8,6 +7,7 @@ import os
 import re
 import sys
 import time
+import math
 import json
 import shutil
 import hashlib
@@ -22,6 +22,7 @@ class config:
 	mem_lo_gb = 10
 	mem_hi_gb = 64
 	max_stdout_characters = 1024
+	job_batch_size = 1
 	time_format = '%d/%m/%Y %H:%M:%S'
 
 class P:
@@ -89,7 +90,7 @@ class Experiment:
 		submitted = 'submitted'
 		running = 'running'
 		success = 'success'
-		failure = 'failure'
+		error = 'error'
 		canceled = 'canceled'
 
 	class Job:
@@ -109,6 +110,7 @@ class Experiment:
 			self.queue = queue
 			self.mem_lo_gb = config.mem_lo_gb
 			self.mem_hi_gb = config.mem_hi_gb
+			self.job_batch_size = config.job_batch_size
 			self.jobs = []
 
 		def calculate_aggregate_status(self):
@@ -117,14 +119,13 @@ class Experiment:
 				Experiment.ExecutionStatus.submitted : [Experiment.ExecutionStatus.waiting],
 				Experiment.ExecutionStatus.running : [Experiment.ExecutionStatus.waiting, Experiment.ExecutionStatus.submitted, Experiment.ExecutionStatus.success],
 				Experiment.ExecutionStatus.success : [],
-				Experiment.ExecutionStatus.failure : None,
+				Experiment.ExecutionStatus.error : None,
 				Experiment.ExecutionStatus.canceled: []
 			}
-			
-			for status, extra_statuses in conditions.items():
-				if any([job.status == status for job in self.jobs]) and (extra_statuses == None or all([job.status in [status] + extra_statuses for job in self.jobs])):
-					return status
-			raise Exception('Can not calculate_aggregate_status')
+			return [status for status, extra_statuses in conditions.items() if any([job.status == status for job in self.jobs]) and (extra_statuses == None or all([job.status in [status] + extra_statuses for job in self.jobs]))][0]
+
+		def job_batch_count(self):
+			return int(math.ceil(float(len(self.jobs)) / self.job_batch_size))
 
 	def __init__(self, name, name_code):
 		self.name = name
@@ -132,16 +133,13 @@ class Experiment:
 		self.stages = []
 
 	def stage(self, name, queue = None):
-		stage = Experiment.Stage(name, queue)
-		self.stages.append(stage)
+		self.stages.append(Experiment.Stage(name, queue))
 
 	def run(self, executable, name = None, env = {}, cwd = path.cwd()):
-		name = name or str(len(self.stages[-1].jobs))
-		job = Experiment.Job(name, executable, env, cwd)
-		self.stages[-1].jobs.append(job)
+		self.stages[-1].jobs.append(Experiment.Job(name or str(len(self.stages[-1].jobs)), executable, env, cwd))
 
 	def has_failed_stages(self):
-		return any([stage.calculate_aggregate_status() == Experiment.ExecutionStatus.failure for stage in self.stages])
+		return any([stage.calculate_aggregate_status() == Experiment.ExecutionStatus.error for stage in self.stages])
 
 	def cancel_stages_after(self, failed_stage):
 		for stage in self.stages[1 + self.stages.index(failed_stage):]:
@@ -204,7 +202,7 @@ def html(e):
 			.job-status-submitted {background-color: gray}
 			.job-status-running {background-color: lightgreen}
 			.job-status-success {background-color: green}
-			.job-status-failure {background-color: red}
+			.job-status-error {background-color: red}
 			.job-status-canceled {background-color: salmon}
 		</style>
 	</head>
@@ -309,7 +307,7 @@ def html(e):
 
 				<div class="col-sm-4 experiment-pane" id="divJobs"></div>
 				<script type="text/x-jsrender" id="tmplJobs">
-					<h1><a href="#{{>name}}"{{>name}}</a></h1>
+					<h1><a href="#{{>name}}">{{>name}}</a></h1>
 					<h3>jobs</h3>
 					<table class="table table-bordered">
 						<thead>
@@ -369,14 +367,14 @@ def html(e):
 	'''
 
 	read_or_empty = lambda x: open(x).read() if os.path.exists(x) else ''
-	sgejoblog = lambda stage, k: '\n'.join(['#QJOB #%d (%s)\n%s\n\n' % (sgejob_idx, log_file_path, read_or_empty(log_file_path)) for log_file_path in [P.sgejoblogfiles(stage.name, sgejob_idx)[k] for sgejob_idx in range(len(stage.jobs))]])
+	sgejoblog = lambda stage, k: '\n'.join(['#QJOB #%d (%s)\n%s\n\n' % (sgejob_idx, log_file_path, read_or_empty(log_file_path)) for log_file_path in [P.sgejoblogfiles(stage.name, sgejob_idx)[k] for sgejob_idx in range(stage.job_batch_count())]])
 
 	stdout_path, stderr_path = P.explogfiles()
 	stdout, stderr = map(read_or_empty, [stdout_path, stderr_path])
 	time_started = re.search('%expsge exp_started = (.+)$', stderr, re.MULTILINE)
 	time_finished = re.search('%expsge exp_finished = (.+)$', stderr, re.MULTILINE)
 
-	j = {'name' : e.name, 'stages' : [], 'stats' : {'time_started' : time_started.group(1) if time_started else None, 'time_finished' : time_finished.group(1) if time_finished else None, 'time_updated' : time.strftim(config.time_format), 'stdout_path' : stdout_path, 'stderr_path' : stderr_path, 'experiment_root' : P.experiment_root, 'name_code' : e.name_code, 'html_root' : P.html_root, 'argv_joined' : ' '.join(['"%s"' % arg if ' ' in arg else arg for arg in sys.argv])}, 'stdout' : stdout, 'stderr' : stderr}
+	j = {'name' : e.name, 'stages' : [], 'stats' : {'time_started' : time_started.group(1) if time_started else None, 'time_finished' : time_finished.group(1) if time_finished else None, 'time_updated' : time.strftime(config.time_format), 'stdout_path' : stdout_path, 'stderr_path' : stderr_path, 'experiment_root' : P.experiment_root, 'name_code' : e.name_code, 'html_root' : P.html_root, 'argv_joined' : ' '.join(['"%s"' % arg if ' ' in arg else arg for arg in sys.argv])}, 'stdout' : stdout, 'stderr' : stderr}
 	j['stats'].update({'config.' + k : v for k, v in config.__dict__.items() if '__' not in k})
 	for stage in e.stages:
 		jobs = []
@@ -410,33 +408,30 @@ def gen(e = None, locally = None):
 	if e == None:
 		e = init()
 
-	generate_job_bash_script_lines = lambda stage, job, job_idx: ['# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, job.name, job_idx )] + map(lambda path: '''if [ ! -e "%s" ]; then echo 'File "%s" does not exist'; exit 1; fi''' % (path, path), job.get_used_paths()) + list(itertools.starmap('export {0}="{1}"'.format, sorted(job.env.items()))) + ['cd "%s"' % job.cwd] + job.executable.generate_bash_script_lines()
-
 	print 'Generating the experiment in "%s"' % (P.locally_generated_script if locally else P.experiment_root)
+	
+	for p in [p for stage in e.stages for job in stage.jobs for p in job.get_used_paths() if p.mkdirs == True and not os.path.exists(str(p))]:
+		os.makedirs(str(p))
+	
+	generate_job_bash_script_lines = lambda stage, job, job_idx: ['# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, job.name, job_idx )] + map(lambda path: '''if [ ! -e "%s" ]; then echo 'File "%s" does not exist'; exit 1; fi''' % (path, path), job.get_used_paths()) + list(itertools.starmap('export {0}="{1}"'.format, sorted(job.env.items()))) + ['cd "%s"' % job.cwd] + job.executable.generate_bash_script_lines()
+	
 	if locally:
 		with open(P.locally_generated_script, 'w') as f:
 			f.write('#! /bin/bash\n')
 			f.write('#  this is a stand-alone script generated from "%s"\n\n' % P.exp_py)
 			for stage in e.stages:
 				for job_idx, job in enumerate(stage.jobs):
-					for p in job.get_used_paths():
-						if p.mkdirs == True and not os.path.exists(str(p)):
-							os.makedirs(str(p))
 					f.write('\n'.join(['('] + map(lambda l: '\t' + l, generate_job_bash_script_lines(stage, job, job_idx)) + [')', '', '']))
 		return
 
 	for stage in e.stages:
 		for job_idx, job in enumerate(stage.jobs):
-			for p in job.get_used_paths():
-				if p.mkdirs == True and not os.path.exists(str(p)):
-					os.makedirs(str(p))
 			with open(P.jobfile(stage.name, job_idx), 'w') as f:
 				f.write('\n'.join(['#! /bin/bash'] + generate_job_bash_script_lines(stage, job, job_idx)))
 
 	for stage in e.stages:
-		for job_idx, job in enumerate(stage.jobs):
-			sgejob_idx = job_idx
-			job_stderr_path = P.joblogfiles(stage.name, job_idx)[1]
+		job_idx = 0
+		for sgejob_idx in range(stage.job_batch_count()):
 			with open(P.sgejobfile(stage.name, sgejob_idx), 'w') as f:
 				f.write('\n'.join([
 					'#$ -N %s_%s' % (e.name_code, stage.name),
@@ -445,13 +440,20 @@ def gen(e = None, locally = None):
 					'#$ -l h_vmem=%.2fG' % stage.mem_hi_gb,
 					'#$ -o %s -e %s\n' % P.sgejoblogfiles(stage.name, sgejob_idx),
 					'#$ -q %s' % stage.queue if stage.queue else '',
-					'',
-					'# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, job.name, job_idx),
-					'echo "%%expsge job_started = $(date +"%s")" > "%s"' % (config.time_format, job_stderr_path),
-					'''/usr/bin/time -f '%%expsge usrbintime_output = {"exit_code" : %%x, "time_user_seconds" : %%U, "time_system_seconds" : %%S, "time_wall_clock_seconds" : %%e, "rss_max_kbytes" : %%M, "rss_avg_kbytes" : %%t, "page_faults_major" : %%F, "page_faults_minor" : %%R, "io_inputs" : %%I, "io_outputs" : %%O, "context_switches_voluntary" : %%w, "context_switches_involuntary" : %%c, "cpu_percentage" : "%%P", "signals_received" : %%k}' bash -e "%s" > "%s" 2>> "%s"''' % ((P.jobfile(stage.name, job_idx), ) + P.joblogfiles(stage.name, job_idx)),
-					'echo "%%expsge job_finished = $(date +"%s")" >> "%s"' % (config.time_format, job_stderr_path),
-					'# end',
-					'']))
+					''
+				]))
+
+				while job_idx < len(stage.jobs) and job_idx < (sgejob_idx + 1) * stage.job_batch_size:
+					job_stderr_path = P.joblogfiles(stage.name, job_idx)[1]
+					f.write('\n'.join([
+						'# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, job.name, job_idx),
+						'echo "%%expsge job_started = $(date +"%s")" > "%s"' % (config.time_format, job_stderr_path),
+						'''/usr/bin/time -f '%%%%expsge usrbintime_output = {"exit_code" : %%x, "time_user_seconds" : %%U, "time_system_seconds" : %%S, "time_wall_clock_seconds" : %%e, "rss_max_kbytes" : %%M, "rss_avg_kbytes" : %%t, "page_faults_major" : %%F, "page_faults_minor" : %%R, "io_inputs" : %%I, "io_outputs" : %%O, "context_switches_voluntary" : %%w, "context_switches_involuntary" : %%c, "cpu_percentage" : "%%P", "signals_received" : %%k}' bash -e "%s" > "%s" 2>> "%s"''' % ((P.jobfile(stage.name, job_idx), ) + P.joblogfiles(stage.name, job_idx)),
+						'echo "%%expsge job_finished = $(date +"%s")" >> "%s"' % (config.time_format, job_stderr_path),
+						'# end',
+						''
+					]))
+					job_idx += 1
 
 def run(dry, verbose):
 	clean()
@@ -473,11 +475,10 @@ def run(dry, verbose):
 		for job_idx, job in enumerate(stage.jobs):
 			stderr_path = P.joblogfiles(stage.name, job_idx)[1]
 			stderr = open(stderr_path).read() if os.path.exists(stderr_path) else ''
-
 			if '%expsge job_started' in stderr:
 				job.status = Experiment.ExecutionStatus.running
 			if 'Command exited with non-zero status' in stderr:
-				job.status = Experiment.ExecutionStatus.failure
+				job.status = Experiment.ExecutionStatus.error
 			if '"exit_code" : 0' in stderr:
 				job.status = Experiment.ExecutionStatus.success
 
@@ -496,17 +497,15 @@ def run(dry, verbose):
 	with open(P.explogfiles()[1], 'w') as f:
 		f.write('%%expsge exp_started = %s\n' % time.strftime(config.time_format))
 
-	for stage in e.stages:
-		print 'stage %s (%d jobs)' % (stage.name, len(stage.jobs))
-		for job_idx in range(len(stage.jobs)):
-			sgejob_idx = job_idx
+	for stage_idx, stage in enumerate(e.stages):
+		print '#%d. %s (%d jobs)' % (stage_idx, stage.name, len(stage.jobs))
+		for sgejob_idx in range(stage.job_batch_count()):
 			wait_if_more_jobs_than(stage, e.name_code, config.maximum_simultaneously_submitted_jobs)
 			Q.submit_job(P.sgejobfile(stage.name, sgejob_idx))
 			stage.jobs[job_idx].status = Experiment.ExecutionStatus.submitted
 
 		wait_if_more_jobs_than(stage, e.name_code, 0)
 
-		update_status(stage)
 		if e.has_failed_stages():
 			e.cancel_stages(stage)
 			print 'Stage [%s] failed. Stopping the experiment.' % stage.name
