@@ -20,34 +20,34 @@ class config:
 	max_stdout_characters = 1024
 	time_format = '%d/%m/%Y %H:%M:%S'
 
-class Paths:
-	jobdir = staticmethod(lambda stage_name: os.path.join(Paths.job, stage_name))
-	logdir = staticmethod(lambda stage_name: os.path.join(Paths.log, stage_name))
-	sgejobdir = staticmethod(lambda stage_name: os.path.join(Paths.sgejob, stage_name))
-	jobfile = staticmethod(lambda stage_name, job_idx: os.path.join(Paths.jobdir(stage_name), 'j%06d.sh' % job_idx))
-	joblogfiles = staticmethod(lambda stage_name, job_idx: (os.path.join(Paths.logdir(stage_name), 'stdout_j%06d.txt' % job_idx), os.path.join(Paths.logdir(stage_name), 'stderr_j%06d.txt' % job_idx)))
-	sgejobfile = staticmethod(lambda stage_name, sgejob_idx: os.path.join(Paths.sgejobdir(stage_name), 's%06d.sh' % sgejob_idx))
-	sgejoblogfiles = staticmethod(lambda stage_name, sgejob_idx: (os.path.join(Paths.logdir(stage_name), 'stdout_s%06d.txt' % sgejob_idx), os.path.join(Paths.logdir(stage_name), 'stderr_s%06d.txt' % sgejob_idx)))
-	explogfiles = staticmethod(lambda: (os.path.join(Paths.log, 'stdout_experiment.txt'), os.path.join(Paths.log, 'stderr_experiment.txt')))
+class P:
+	jobdir = staticmethod(lambda stage_name: os.path.join(P.job, stage_name))
+	logdir = staticmethod(lambda stage_name: os.path.join(P.log, stage_name))
+	sgejobdir = staticmethod(lambda stage_name: os.path.join(P.sgejob, stage_name))
+	jobfile = staticmethod(lambda stage_name, job_idx: os.path.join(P.jobdir(stage_name), 'j%06d.sh' % job_idx))
+	joblogfiles = staticmethod(lambda stage_name, job_idx: (os.path.join(P.logdir(stage_name), 'stdout_j%06d.txt' % job_idx), os.path.join(P.logdir(stage_name), 'stderr_j%06d.txt' % job_idx)))
+	sgejobfile = staticmethod(lambda stage_name, sgejob_idx: os.path.join(P.sgejobdir(stage_name), 's%06d.sh' % sgejob_idx))
+	sgejoblogfiles = staticmethod(lambda stage_name, sgejob_idx: (os.path.join(P.logdir(stage_name), 'stdout_s%06d.txt' % sgejob_idx), os.path.join(P.logdir(stage_name), 'stderr_s%06d.txt' % sgejob_idx)))
+	explogfiles = staticmethod(lambda: (os.path.join(P.log, 'stdout_experiment.txt'), os.path.join(P.log, 'stderr_experiment.txt')))
 
 	@staticmethod
-	def init(exp_py, root, htmlroot = None, htmlrootalias = None):
-		Paths.exp_py = exp_py
-		Paths.experiment_name_code = os.path.basename(Paths.exp_py) + '_' + hashlib.md5(os.path.abspath(Paths.exp_py)).hexdigest()[:3].upper()
+	def init(exp_py, root = None, htmlroot = None, htmlrootalias = None):
+		P.exp_py = exp_py
+		P.experiment_name_code = os.path.basename(P.exp_py) + '_' + hashlib.md5(os.path.abspath(P.exp_py)).hexdigest()[:3].upper()
 		
-		Paths.root = os.path.abspath(root)
-		Paths.html_root = htmlroot or getattr(config, 'htmlroot') or os.path.join(Paths.root, 'html')
-		Paths.html_root_alias = htmlrootalias or getattr(config, 'htmlrootalias')
-		Paths.html_report_file_name = Paths.experiment_name_code + '.html'
-		Paths.html_report = os.path.join(Paths.html_root, Paths.html_report_file_name)
+		P.root = os.path.abspath(root or getattr(config, 'root'))
+		P.html_root = htmlroot or getattr(config, 'htmlroot') or os.path.join(P.root, 'html')
+		P.html_root_alias = htmlrootalias or getattr(config, 'htmlrootalias')
+		P.html_report_file_name = P.experiment_name_code + '.html'
+		P.html_report = os.path.join(P.html_root, P.html_report_file_name)
 
-		Paths.experiment_root = os.path.join(Paths.root, Paths.experiment_name_code)
-		Paths.log = os.path.join(Paths.experiment_root, 'log')
-		Paths.job = os.path.join(Paths.experiment_root, 'job')
-		Paths.sgejob = os.path.join(Paths.experiment_root, 'sge')
-		Paths.all_dirs = [Paths.root, Paths.experiment_root, Paths.log, Paths.job, Paths.sgejob]
+		P.experiment_root = os.path.join(P.root, P.experiment_name_code)
+		P.log = os.path.join(P.experiment_root, 'log')
+		P.job = os.path.join(P.experiment_root, 'job')
+		P.sgejob = os.path.join(P.experiment_root, 'sge')
+		P.all_dirs = [P.root, P.experiment_root, P.log, P.job, P.sgejob]
 
-class SGE:
+class Q:
 	@staticmethod
 	def get_jobs(job_name_prefix, state = ''):
 		return [elem for elem in xml.dom.minidom.parseString(subprocess.check_output(['qstat', '-xml'])).documentElement.getElementsByTagName('job_list') if elem.getElementsByTagName('JB_name')[0].firstChild.data.startswith(job_name_prefix) and elem.getElementsByTagName('state')[0].firstChild.data.startswith(state)]
@@ -156,27 +156,27 @@ class bash:
 
 def init():
 	globals_mod = globals().copy()
-	e = Experiment(os.path.basename(Paths.exp_py), Paths.experiment_name_code)
+	e = Experiment(os.path.basename(P.exp_py), P.experiment_name_code)
 	globals_mod.update({m : getattr(e, m) for m in dir(e)})
-	exec open(Paths.exp_py, 'r').read() in globals_mod, globals_mod
+	exec open(P.exp_py, 'r').read() in globals_mod, globals_mod
 
 	def makedirs_if_does_not_exist(d):
 		if not os.path.exists(d):
 			os.makedirs(d)
 		
-	for d in Paths.all_dirs:
+	for d in P.all_dirs:
 		makedirs_if_does_not_exist(d)
 	
 	for stage in e.stages:
-		makedirs_if_does_not_exist(Paths.logdir(stage.name))
-		makedirs_if_does_not_exist(Paths.jobdir(stage.name))
-		makedirs_if_does_not_exist(Paths.sgejobdir(stage.name))
+		makedirs_if_does_not_exist(P.logdir(stage.name))
+		makedirs_if_does_not_exist(P.jobdir(stage.name))
+		makedirs_if_does_not_exist(P.sgejobdir(stage.name))
 	
 	return e
 
 def clean():
-	if os.path.exists(Paths.experiment_root):
-		shutil.rmtree(Paths.experiment_root)
+	if os.path.exists(P.experiment_root):
+		shutil.rmtree(P.experiment_root)
 
 def html(e):
 	HTML_PATTERN = '''
@@ -364,19 +364,19 @@ def html(e):
 	'''
 
 	read_or_empty = lambda x: open(x).read() if os.path.exists(x) else ''
-	sgejoblog = lambda stage, k: '\n'.join(['#SGEJOB #%d (%s)\n%s\n\n' % (sgejob_idx, log_file_path, read_or_empty(log_file_path)) for log_file_path in [Paths.sgejoblogfiles(stage.name, sgejob_idx)[k] for sgejob_idx in range(len(stage.jobs))]])
+	sgejoblog = lambda stage, k: '\n'.join(['#QJOB #%d (%s)\n%s\n\n' % (sgejob_idx, log_file_path, read_or_empty(log_file_path)) for log_file_path in [P.sgejoblogfiles(stage.name, sgejob_idx)[k] for sgejob_idx in range(len(stage.jobs))]])
 
-	stdout_path, stderr_path = Paths.explogfiles()
+	stdout_path, stderr_path = P.explogfiles()
 	stdout, stderr = map(read_or_empty, [stdout_path, stderr_path])
 	time_started = re.search('expsge_exp_started = (.+)$', stderr, re.MULTILINE)
 	time_finished = re.search('expsge_exp_finished = (.+)$', stderr, re.MULTILINE)
 
-	j = {'name' : e.name, 'stages' : [], 'stats' : {'time_started' : time_started.group(1) if time_started else None, 'time_finished' : time_finished.group(1) if time_finished else None, 'stdout_path' : stdout_path, 'stderr_path' : stderr_path, 'experiment_root' : Paths.experiment_root, 'name_code' : e.name_code, 'html_root' : Paths.html_root, 'argv_joined' : ' '.join(['"%s"' % arg if ' ' in arg else arg for arg in sys.argv])}, 'stdout' : stdout, 'stderr' : stderr}
+	j = {'name' : e.name, 'stages' : [], 'stats' : {'time_started' : time_started.group(1) if time_started else None, 'time_finished' : time_finished.group(1) if time_finished else None, 'stdout_path' : stdout_path, 'stderr_path' : stderr_path, 'experiment_root' : P.experiment_root, 'name_code' : e.name_code, 'html_root' : P.html_root, 'argv_joined' : ' '.join(['"%s"' % arg if ' ' in arg else arg for arg in sys.argv])}, 'stdout' : stdout, 'stderr' : stderr}
 	j['stats'].update({k : v for k, v in config.__dict__.items() if '__' not in k})
 	for stage in e.stages:
 		jobs = []
 		for job_idx, job in enumerate(stage.jobs):
-			stdout_path, stderr_path = Paths.joblogfiles(stage.name, job_idx)
+			stdout_path, stderr_path = P.joblogfiles(stage.name, job_idx)
 			stdout, stderr = map(read_or_empty, [stdout_path, stderr_path])
 			if stdout != None and len(stdout) > config.max_stdout_characters:
 				half = config.max_stdout_characters / 2
@@ -398,14 +398,14 @@ def html(e):
 		time_wall_clock_avg_seconds = filter(lambda x: x != None, [j_job['stats'].get('time_wall_clock_seconds') for j_job in jobs])
 		j['stages'].append({'name' : stage.name, 'jobs' : jobs, 'status' : stage.calculate_aggregate_status(), 'stdout' : stdout, 'stderr' : stderr, 'stats' : {'mem_lo_gb' : stage.mem_lo_gb, 'mem_hi_gb' : stage.mem_hi_gb, 'time_wall_clock_avg_seconds' : sum(time_wall_clock_avg_seconds) / len(time_wall_clock_avg_seconds) if time_wall_clock_avg_seconds else None}})
 			
-	with open(Paths.html_report, 'w') as f:
+	with open(P.html_report, 'w') as f:
 		f.write(HTML_PATTERN % (e.name_code, json.dumps(j)))
 
 def gen(e):
-	print 'Generating the experiment in "%s"' % Paths.experiment_root
+	print 'Generating the experiment in "%s"' % P.experiment_root
 	for stage in e.stages:
 		for job_idx, job in enumerate(stage.jobs):
-			with open(Paths.jobfile(stage.name, job_idx), 'w') as f:
+			with open(P.jobfile(stage.name, job_idx), 'w') as f:
 				f.write('\n'.join(
 					['# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, job.name, job_idx )] +
 					map(lambda path: '''if [ ! -e "%s" ]; then echo 'File "%s" does not exist'; exit 1; fi''' % (path, path), job.get_used_paths()) +
@@ -421,19 +421,19 @@ def gen(e):
 	for stage in e.stages:
 		for job_idx, job in enumerate(stage.jobs):
 			sgejob_idx = job_idx
-			job_stderr_path = Paths.joblogfiles(stage.name, job_idx)[1]
-			with open(Paths.sgejobfile(stage.name, sgejob_idx), 'w') as f:
+			job_stderr_path = P.joblogfiles(stage.name, job_idx)[1]
+			with open(P.sgejobfile(stage.name, sgejob_idx), 'w') as f:
 				f.write('\n'.join([
 					'#$ -N %s_%s' % (e.name_code, stage.name),
 					'#$ -S /bin/bash',
 					'#$ -l mem_req=%.2fG' % stage.mem_lo_gb,
 					'#$ -l h_vmem=%.2fG' % stage.mem_hi_gb,
-					'#$ -o %s -e %s\n' % Paths.sgejoblogfiles(stage.name, sgejob_idx),
+					'#$ -o %s -e %s\n' % P.sgejoblogfiles(stage.name, sgejob_idx),
 					'#$ -q %s' % stage.queue if stage.queue else '',
 					'',
 					'# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, job.name, job_idx),
 					'echo "expsge_job_started = $(date +"%s")" > "%s"' % (job_stderr_path, config.time_format),
-					'''/usr/bin/time -f 'expsge_usrbintime_output = {"exit_code" : %%x, "time_user_seconds" : %%U, "time_system_seconds" : %%S, "time_wall_clock_seconds" : %%e, "rss_max_kbytes" : %%M, "rss_avg_kbytes" : %%t, "page_faults_major" : %%F, "page_faults_minor" : %%R, "io_inputs" : %%I, "io_outputs" : %%O, "context_switches_voluntary" : %%w, "context_switches_involuntary" : %%c, "cpu_percentage" : "%%P", "signals_received" : %%k}' bash -e "%s" > "%s" 2>> "%s"''' % ((Paths.jobfile(stage.name, job_idx), ) + Paths.joblogfiles(stage.name, job_idx)),
+					'''/usr/bin/time -f 'expsge_usrbintime_output = {"exit_code" : %%x, "time_user_seconds" : %%U, "time_system_seconds" : %%S, "time_wall_clock_seconds" : %%e, "rss_max_kbytes" : %%M, "rss_avg_kbytes" : %%t, "page_faults_major" : %%F, "page_faults_minor" : %%R, "io_inputs" : %%I, "io_outputs" : %%O, "context_switches_voluntary" : %%w, "context_switches_involuntary" : %%c, "cpu_percentage" : "%%P", "signals_received" : %%k}' bash -e "%s" > "%s" 2>> "%s"''' % ((P.jobfile(stage.name, job_idx), ) + P.joblogfiles(stage.name, job_idx)),
 					'echo "expsge_job_finished = $(date +"%s")" >> "%s"' % (job_stderr_path, config.time_format),
 					'# end',
 					'']))
@@ -443,9 +443,9 @@ def run(dry, verbose):
 	e = init()
 	gen(e)
 
-	print 'The report is available at%s:' % (' (provided htmlrootalias used)' if Paths.html_root_alias else '')
+	print 'The report is available at%s:' % (' (provided htmlrootalias used)' if P.html_root_alias else '')
 	print ''
-	print os.path.join(Paths.html_root_alias or Paths.html_root, Paths.html_report_file_name)
+	print os.path.join(P.html_root_alias or P.html_root, P.html_report_file_name)
 	print ''
 
 	html(e)
@@ -456,7 +456,7 @@ def run(dry, verbose):
 	
 	def update_status(stage):
 		for job_idx, job in enumerate(stage.jobs):
-			stderr_path = Paths.joblogfiles(stage.name, job_idx)[1]
+			stderr_path = P.joblogfiles(stage.name, job_idx)[1]
 			stderr = open(stderr_path).read() if os.path.exists(stderr_path) else ''
 
 			if 'expsge_job_started' in stderr:
@@ -467,8 +467,8 @@ def run(dry, verbose):
 				job.status = Experiment.ExecutionStatus.success
 
 	def wait_if_more_jobs_than(stage, job_name_prefix, num_jobs):
-		while len(SGE.get_jobs(job_name_prefix)) > num_jobs:
-			msg = 'Running %d jobs, waiting %d jobs.' % (len(SGE.get_jobs(job_name_prefix, 'r')), len(SGE.get_jobs(job_name_prefix, 'qw')))
+		while len(Q.get_jobs(job_name_prefix)) > num_jobs:
+			msg = 'Running %d jobs, waiting %d jobs.' % (len(Q.get_jobs(job_name_prefix, 'r')), len(Q.get_jobs(job_name_prefix, 'qw')))
 			if verbose:
 				print msg
 			time.sleep(config.sleep_between_queue_checks)
@@ -478,7 +478,7 @@ def run(dry, verbose):
 		update_status(stage)
 		html(e)
 	
-	with open(Paths.explogfiles()[1], 'w') as f:
+	with open(P.explogfiles()[1], 'w') as f:
 		f.write('expsge_exp_started = %s\n' % time.strftime(config.time_format))
 
 	for stage_idx, stage in enumerate(e.stages):
@@ -486,7 +486,7 @@ def run(dry, verbose):
 		for job_idx in range(len(stage.jobs)):
 			sgejob_idx = job_idx
 			wait_if_more_jobs_than(stage, e.name_code, config.maximum_simultaneously_submitted_jobs)
-			SGE.submit_job(Paths.sgejobfile(stage.name, sgejob_idx))
+			Q.submit_job(P.sgejobfile(stage.name, sgejob_idx))
 			stage.jobs[job_idx].status = Experiment.ExecutionStatus.submitted
 
 		wait_if_more_jobs_than(stage, e.name_code, 0)
@@ -497,14 +497,14 @@ def run(dry, verbose):
 			print 'Stage [%s] failed. Stopping the experiment.' % stage.name
 			break
 	
-	with open(Paths.explogfiles()[1], 'a') as f:
+	with open(P.explogfiles()[1], 'a') as f:
 		f.write('expsge_exp_finished = %s\n' % time.strftime(config.time_format))
 
 	html(e)
 	print '\nDone.'
 
 def stop():
-	SGE.delete_jobs(SGE.get_jobs(init().name_code))
+	Q.delete_jobs(Q.get_jobs(init().name_code))
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
@@ -528,11 +528,11 @@ if __name__ == '__main__':
 	rcfile, cmd = args.pop('rcfile'), args.pop('func')
 	if os.path.exists(rcfile):
 		exec open(rcfile).read() in globals(), globals()
-	Paths.init(args.pop('exp_py'), args.pop('root'), args.pop('htmlroot'), args.pop('htmlrootalias'))
+	P.init(args.pop('exp_py'), args.pop('root'), args.pop('htmlroot'), args.pop('htmlrootalias'))
 	
 	try:
 		cmd(**args)
 	except KeyboardInterrupt:
 		print 'Quitting (Ctrl+C pressed). To stop jobs:'
 		print ''
-		print 'expsge stop "%s"' % Paths.exp_py
+		print 'expsge stop "%s"' % P.exp_py
