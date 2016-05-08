@@ -434,14 +434,6 @@ def gen(e = None, locally = None):
 
 	for stage in e.stages:
 		for job_idx, job in enumerate(stage.jobs):
-			for p in job.get_used_paths():
-				if p.mkdirs == True and not os.path.exists(str(p)):
-					os.makedirs(str(p))
-			with open(P.jobfile(stage.name, job_idx), 'w') as f:
-				f.write('\n'.join(['#! /bin/bash'] + generate_job_bash_script_lines(stage, job)))
-
-	for stage in e.stages:
-		for job_idx, job in enumerate(stage.jobs):
 			sgejob_idx = job_idx
 			job_stderr_path = P.joblogfiles(stage.name, job_idx)[1]
 			with open(P.sgejobfile(stage.name, sgejob_idx), 'w') as f:
