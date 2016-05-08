@@ -1,4 +1,6 @@
 #TODO: fix sgejob_idx to allow complex job <-> sgejob mapping
+#TODO: remember job ids, check if jobs were killed
+#TODO: nice console output (with ok-failed wigwam-styled messages with stage times)
 
 import os
 import re
@@ -54,7 +56,7 @@ class Q:
 	
 	@staticmethod
 	def submit_job(sgejob_file):
-		subprocess.check_call(['qsub', sgejob_file])
+		return int(subprocess.check_output(['qsub', sgejob_file, '-terse']))
 
 	@staticmethod
 	def delete_jobs(jobs):
