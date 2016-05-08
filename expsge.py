@@ -370,7 +370,10 @@ def html(e):
 </html>
 	'''
 
-	read_or_empty = lambda x: open(x).read() if os.path.exists(x) else ''
+	def read_or_empty(file_path):
+		subprocess.check_call(['touch', file_path])
+		return open(file_path).read() if os.path.exists(file_path) else ''
+
 	sgejoblog = lambda stage, k: '\n'.join(['#SGEJOB #%d (%s)\n%s\n\n' % (sgejob_idx, log_file_path, read_or_empty(log_file_path)) for log_file_path in [P.sgejoblogfiles(stage.name, sgejob_idx)[k] for sgejob_idx in range(stage.job_batch_count())]])
 
 	stdout_path, stderr_path = P.explogfiles()
@@ -476,6 +479,7 @@ def run(dry, verbose):
 	def update_status(stage):
 		for job_idx, job in enumerate(stage.jobs):
 			stderr_path = P.joblogfiles(stage.name, job_idx)[1]
+			subprocess.check_call(['touch', stderr_path])
 			stderr = open(stderr_path).read() if os.path.exists(stderr_path) else ''
 			if '%expsge job_started' in stderr:
 				job.status = Experiment.ExecutionStatus.running
@@ -492,7 +496,7 @@ def run(dry, verbose):
 			time.sleep(config.sleep_between_queue_checks)
 			update_status(stage)
 			html(e)
-
+		
 		update_status(stage)
 		html(e)
 	
@@ -502,7 +506,7 @@ def run(dry, verbose):
 	for stage_idx, stage in enumerate(e.stages):
 		print '#%d. %s (%d jobs)' % (1 + stage_idx, stage.name, len(stage.jobs))
 		for sgejob_idx in range(stage.job_batch_count()):
-			wait_if_more_jobs_than(stage, e.name_code, config.maximum_simultaneously_submitted_jobs)
+			#wait_if_more_jobs_than(stage, e.name_code, config.maximum_simultaneously_submitted_jobs)
 			Q.submit_job(P.sgejobfile(stage.name, sgejob_idx))
 			for job_idx in stage.calculate_job_range(sgejob_idx):
 				stage.jobs[job_idx].status = Experiment.ExecutionStatus.submitted
@@ -510,7 +514,7 @@ def run(dry, verbose):
 		wait_if_more_jobs_than(stage, e.name_code, 0)
 
 		if e.has_failed_stages():
-			e.cancel_stages(stage)
+			e.cancel_stages_after(stage)
 			print 'Stage [%s] failed. Stopping the experiment.' % stage.name
 			break
 	
