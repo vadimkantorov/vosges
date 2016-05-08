@@ -56,7 +56,7 @@ class Q:
 	
 	@staticmethod
 	def submit_job(sgejob_file):
-		return int(subprocess.check_output(['qsub', sgejob_file, '-terse']))
+		return int(subprocess.check_output(['qsub', '-terse', sgejob_file]))
 
 	@staticmethod
 	def delete_jobs(jobs):
