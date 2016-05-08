@@ -446,9 +446,9 @@ def gen(e = None, locally = None):
 					'#$ -q %s' % stage.queue if stage.queue else '',
 					'',
 					'# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, job.name, job_idx),
-					'echo "%expsge job_started = $(date +"%s")" > "%s"' % (config.time_format, job_stderr_path),
+					'echo "%%expsge job_started = $(date +"%s")" > "%s"' % (config.time_format, job_stderr_path),
 					'''/usr/bin/time -f '%expsge usrbintime_output = {"exit_code" : %%x, "time_user_seconds" : %%U, "time_system_seconds" : %%S, "time_wall_clock_seconds" : %%e, "rss_max_kbytes" : %%M, "rss_avg_kbytes" : %%t, "page_faults_major" : %%F, "page_faults_minor" : %%R, "io_inputs" : %%I, "io_outputs" : %%O, "context_switches_voluntary" : %%w, "context_switches_involuntary" : %%c, "cpu_percentage" : "%%P", "signals_received" : %%k}' bash -e "%s" > "%s" 2>> "%s"''' % ((P.jobfile(stage.name, job_idx), ) + P.joblogfiles(stage.name, job_idx)),
-					'echo "%expsge job_finished = $(date +"%s")" >> "%s"' % (config.time_format, job_stderr_path),
+					'echo "%%expsge job_finished = $(date +"%s")" >> "%s"' % (config.time_format, job_stderr_path),
 					'# end',
 					'']))
 
@@ -493,7 +493,7 @@ def run(dry, verbose):
 		html(e)
 	
 	with open(P.explogfiles()[1], 'w') as f:
-		f.write('%expsge exp_started = %s\n' % time.strftime(config.time_format))
+		f.write('%%expsge exp_started = %s\n' % time.strftime(config.time_format))
 
 	for stage in e.stages:
 		print 'stage %s (%d jobs)' % (stage.name, len(stage.jobs))
@@ -512,7 +512,7 @@ def run(dry, verbose):
 			break
 	
 	with open(P.explogfiles()[1], 'a') as f:
-		f.write('%expsge exp_finished = %s\n' % time.strftime(config.time_format))
+		f.write('%%expsge exp_finished = %s\n' % time.strftime(config.time_format))
 
 	html(e)
 	print '\nDone.'
