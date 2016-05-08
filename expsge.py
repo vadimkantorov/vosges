@@ -371,7 +371,7 @@ def html(e):
 	'''
 
 	read_or_empty = lambda x: open(x).read() if os.path.exists(x) else ''
-	sgejoblog = lambda stage, k: '\n'.join(['#QJOB #%d (%s)\n%s\n\n' % (sgejob_idx, log_file_path, read_or_empty(log_file_path)) for log_file_path in [P.sgejoblogfiles(stage.name, sgejob_idx)[k] for sgejob_idx in range(stage.job_batch_count())]])
+	sgejoblog = lambda stage, k: '\n'.join(['#SGEJOB #%d (%s)\n%s\n\n' % (sgejob_idx, log_file_path, read_or_empty(log_file_path)) for log_file_path in [P.sgejoblogfiles(stage.name, sgejob_idx)[k] for sgejob_idx in range(stage.job_batch_count())]])
 
 	stdout_path, stderr_path = P.explogfiles()
 	stdout, stderr = map(read_or_empty, [stdout_path, stderr_path])
@@ -500,7 +500,7 @@ def run(dry, verbose):
 		f.write('%%expsge exp_started = %s\n' % time.strftime(config.time_format))
 
 	for stage_idx, stage in enumerate(e.stages):
-		print '#%d. %s (%d jobs)' % (stage_idx, stage.name, len(stage.jobs))
+		print '#%d. %s (%d jobs)' % (1 + stage_idx, stage.name, len(stage.jobs))
 		for sgejob_idx in range(stage.job_batch_count()):
 			wait_if_more_jobs_than(stage, e.name_code, config.maximum_simultaneously_submitted_jobs)
 			Q.submit_job(P.sgejobfile(stage.name, sgejob_idx))
