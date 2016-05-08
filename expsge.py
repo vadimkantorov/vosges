@@ -1,6 +1,7 @@
 #TODO: fix sgejob_idx to allow complex job <-> sgejob mapping
 #TODO: remember job ids, check if jobs were killed
 #TODO: nice console output (with ok-failed wigwam-styled messages with stage times)
+#TODO: http post when a job is failed / canceled
 
 import os
 import re
@@ -34,8 +35,9 @@ class P:
 
 	@staticmethod
 	def init(exp_py, root = None, htmlroot = None, htmlrootalias = None):
-		P.exp_py = exp_py
-		P.experiment_name_code = os.path.basename(P.exp_py) + '_' + hashlib.md5(os.path.abspath(P.exp_py)).hexdigest()[:3].upper()
+		P.exp_py = os.path.abspath(exp_py)
+		P.locally_generated_script = os.path.abspath(os.path.basename(exp_py) + '.generated.sh')
+		P.experiment_name_code = os.path.basename(P.exp_py) + '_' + hashlib.md5(P.exp_py).hexdigest()[:3].upper()
 		
 		P.root = os.path.abspath(getattr(config, 'root') or root)
 		P.html_root = getattr(config, 'htmlroot') or htmlroot or os.path.join(P.root, 'html')
@@ -370,8 +372,8 @@ def html(e):
 
 	stdout_path, stderr_path = P.explogfiles()
 	stdout, stderr = map(read_or_empty, [stdout_path, stderr_path])
-	time_started = re.search('expsge_exp_started = (.+)$', stderr, re.MULTILINE)
-	time_finished = re.search('expsge_exp_finished = (.+)$', stderr, re.MULTILINE)
+	time_started = re.search('%expsge exp_started = (.+)$', stderr, re.MULTILINE)
+	time_finished = re.search('%expsge exp_finished = (.+)$', stderr, re.MULTILINE)
 
 	j = {'name' : e.name, 'stages' : [], 'stats' : {'time_started' : time_started.group(1) if time_started else None, 'time_finished' : time_finished.group(1) if time_finished else None, 'stdout_path' : stdout_path, 'stderr_path' : stderr_path, 'experiment_root' : P.experiment_root, 'name_code' : e.name_code, 'html_root' : P.html_root, 'argv_joined' : ' '.join(['"%s"' % arg if ' ' in arg else arg for arg in sys.argv])}, 'stdout' : stdout, 'stderr' : stderr}
 	j['stats'].update({'config.' + k : v for k, v in config.__dict__.items() if '__' not in k})
@@ -385,9 +387,9 @@ def html(e):
 				stdout = stdout[:half] + '\n\n[%d characters skipped]\n\n' % (len(stdout) - 2 * half) + stdout[-half:]
 			
 			stats = {'stdout_path' : stdout_path, 'stderr_path' : stderr_path}
-			usrbintime_output = re.search('expsge_usrbintime_output = (.+)$', stderr, re.MULTILINE)
-			time_started = re.search('expsge_job_started = (.+)$', stderr, re.MULTILINE)
-			time_finished = re.search('expsge_job_finished = (.+)$', stderr, re.MULTILINE)
+			usrbintime_output = re.search('%expsge usrbintime_output = (.+)$', stderr, re.MULTILINE)
+			time_started = re.search('%expsge job_started = (.+)$', stderr, re.MULTILINE)
+			time_finished = re.search('%expsge job_finished = (.+)$', stderr, re.MULTILINE)
 			if usrbintime_output:
 				stats.update(json.loads(usrbintime_output.group(1)))
 			if time_started:
@@ -403,22 +405,40 @@ def html(e):
 	with open(P.html_report, 'w') as f:
 		f.write(HTML_PATTERN % (e.name_code, json.dumps(j)))
 
-def gen(e):
-	print 'Generating the experiment in "%s"' % P.experiment_root
+def gen(e = None, locally = None):
+	if e == None:
+		e = init()
+
+	generate_job_bash_script_lines = lambda stage, job, job_idx: ['# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, job.name, job_idx )] + map(lambda path: '''if [ ! -e "%s" ]; then echo 'File "%s" does not exist'; exit 1; fi''' % (path, path), job.get_used_paths()) + list(itertools.starmap('export {0}="{1}"'.format, sorted(job.env.items()))) + ['cd "%s"' % job.cwd] + job.executable.generate_bash_script_lines()
+
+	print 'Generating the experiment in "%s"' % (P.locally_generated_script if locally else P.experiment_root)
+	if locally:
+		with open(P.locally_generated_script, 'w') as f:
+			f.write('#! /bin/bash\n')
+			f.write('#  this is a stand-alone script generated from "%s"\n\n' % P.exp_py)
+			for stage in e.stages:
+				for job_idx, job in enumerate(stage.jobs):
+					for p in job.get_used_paths():
+						if p.mkdirs == True and not os.path.exists(str(p)):
+							os.makedirs(str(p))
+					f.write('\n'.join(['('] + map(lambda l: '\t' + l, generate_job_bash_script_lines(stage, job, job_idx)) + [')', '', '']))
+		return
+
 	for stage in e.stages:
 		for job_idx, job in enumerate(stage.jobs):
-			with open(P.jobfile(stage.name, job_idx), 'w') as f:
-				f.write('\n'.join(
-					['# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, job.name, job_idx )] +
-					map(lambda path: '''if [ ! -e "%s" ]; then echo 'File "%s" does not exist'; exit 1; fi''' % (path, path), job.get_used_paths()) +
-					list(itertools.starmap('export {0}="{1}"'.format, sorted(job.env.items()))) +
-					['cd "%s"' % job.cwd] +
-					job.executable.generate_bash_script_lines()
-				))
-
 			for p in job.get_used_paths():
 				if p.mkdirs == True and not os.path.exists(str(p)):
 					os.makedirs(str(p))
+			with open(P.jobfile(stage.name, job_idx), 'w') as f:
+				f.write('\n'.join(['#! /bin/bash'] + generate_job_bash_script_lines(stage, job, job_idx)))
+
+	for stage in e.stages:
+		for job_idx, job in enumerate(stage.jobs):
+			for p in job.get_used_paths():
+				if p.mkdirs == True and not os.path.exists(str(p)):
+					os.makedirs(str(p))
+			with open(P.jobfile(stage.name, job_idx), 'w') as f:
+				f.write('\n'.join(['#! /bin/bash'] + generate_job_bash_script_lines(stage, job)))
 
 	for stage in e.stages:
 		for job_idx, job in enumerate(stage.jobs):
@@ -434,9 +454,9 @@ def gen(e):
 					'#$ -q %s' % stage.queue if stage.queue else '',
 					'',
 					'# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, job.name, job_idx),
-					'echo "expsge_job_started = $(date +"%s")" > "%s"' % (job_stderr_path, config.time_format),
-					'''/usr/bin/time -f 'expsge_usrbintime_output = {"exit_code" : %%x, "time_user_seconds" : %%U, "time_system_seconds" : %%S, "time_wall_clock_seconds" : %%e, "rss_max_kbytes" : %%M, "rss_avg_kbytes" : %%t, "page_faults_major" : %%F, "page_faults_minor" : %%R, "io_inputs" : %%I, "io_outputs" : %%O, "context_switches_voluntary" : %%w, "context_switches_involuntary" : %%c, "cpu_percentage" : "%%P", "signals_received" : %%k}' bash -e "%s" > "%s" 2>> "%s"''' % ((P.jobfile(stage.name, job_idx), ) + P.joblogfiles(stage.name, job_idx)),
-					'echo "expsge_job_finished = $(date +"%s")" >> "%s"' % (job_stderr_path, config.time_format),
+					'echo "%expsge job_started = $(date +"%s")" > "%s"' % (job_stderr_path, config.time_format),
+					'''/usr/bin/time -f '%expsge usrbintime_output = {"exit_code" : %%x, "time_user_seconds" : %%U, "time_system_seconds" : %%S, "time_wall_clock_seconds" : %%e, "rss_max_kbytes" : %%M, "rss_avg_kbytes" : %%t, "page_faults_major" : %%F, "page_faults_minor" : %%R, "io_inputs" : %%I, "io_outputs" : %%O, "context_switches_voluntary" : %%w, "context_switches_involuntary" : %%c, "cpu_percentage" : "%%P", "signals_received" : %%k}' bash -e "%s" > "%s" 2>> "%s"''' % ((P.jobfile(stage.name, job_idx), ) + P.joblogfiles(stage.name, job_idx)),
+					'echo "%expsge job_finished = $(date +"%s")" >> "%s"' % (job_stderr_path, config.time_format),
 					'# end',
 					'']))
 
@@ -461,7 +481,7 @@ def run(dry, verbose):
 			stderr_path = P.joblogfiles(stage.name, job_idx)[1]
 			stderr = open(stderr_path).read() if os.path.exists(stderr_path) else ''
 
-			if 'expsge_job_started' in stderr:
+			if '%expsge job_started' in stderr:
 				job.status = Experiment.ExecutionStatus.running
 			if 'Command exited with non-zero status' in stderr:
 				job.status = Experiment.ExecutionStatus.failure
@@ -481,10 +501,10 @@ def run(dry, verbose):
 		html(e)
 	
 	with open(P.explogfiles()[1], 'w') as f:
-		f.write('expsge_exp_started = %s\n' % time.strftime(config.time_format))
+		f.write('%expsge exp_started = %s\n' % time.strftime(config.time_format))
 
-	for stage_idx, stage in enumerate(e.stages):
-		print 'Starting stage #%d [%s], with %d jobs.' % (stage_idx, stage.name, len(stage.jobs))
+	for stage in e.stages:
+		print 'stage %s (%d jobs)' % (stage.name, len(stage.jobs))
 		for job_idx in range(len(stage.jobs)):
 			sgejob_idx = job_idx
 			wait_if_more_jobs_than(stage, e.name_code, config.maximum_simultaneously_submitted_jobs)
@@ -500,7 +520,7 @@ def run(dry, verbose):
 			break
 	
 	with open(P.explogfiles()[1], 'a') as f:
-		f.write('expsge_exp_finished = %s\n' % time.strftime(config.time_format))
+		f.write('%expsge exp_finished = %s\n' % time.strftime(config.time_format))
 
 	html(e)
 	print '\nDone.'
@@ -515,6 +535,11 @@ if __name__ == '__main__':
 	parser.add_argument('--htmlrootalias')
 	parser.add_argument('--rcfile', default = os.path.expanduser('~/.expsgerc'))
 	subparsers = parser.add_subparsers()
+
+	cmd = subparsers.add_parser('gen')
+	cmd.set_defaults(func = gen)
+	cmd.add_argument('exp_py')
+	cmd.add_argument('--locally', action = 'store_true')
 	
 	cmd = subparsers.add_parser('stop')
 	cmd.set_defaults(func = stop)
