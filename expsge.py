@@ -434,7 +434,7 @@ def run(dry, verbose):
 	e = init()
 	gen(e)
 
-	print 'The report is available at%s:' % (' (provided --htmlrootalias used)' if Paths.html_root_alias else '')
+	print 'The report is available at%s:' % (' (provided htmlrootalias used)' if Paths.html_root_alias else '')
 	print ''
 	print os.path.join(Paths.html_root_alias or Paths.html_root, Paths.html_report_file_name)
 	print ''
