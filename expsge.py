@@ -18,6 +18,7 @@ class config:
 	mem_lo_gb = 10
 	mem_hi_gb = 64
 	max_stdout_characters = 1024
+	time_format = '%d/%m/%Y %H:%M:%S'
 
 class Paths:
 	jobdir = staticmethod(lambda stage_name: os.path.join(Paths.job, stage_name))
@@ -27,6 +28,7 @@ class Paths:
 	joblogfiles = staticmethod(lambda stage_name, job_idx: (os.path.join(Paths.logdir(stage_name), 'stdout_j%06d.txt' % job_idx), os.path.join(Paths.logdir(stage_name), 'stderr_j%06d.txt' % job_idx)))
 	sgejobfile = staticmethod(lambda stage_name, sgejob_idx: os.path.join(Paths.sgejobdir(stage_name), 's%06d.sh' % sgejob_idx))
 	sgejoblogfiles = staticmethod(lambda stage_name, sgejob_idx: (os.path.join(Paths.logdir(stage_name), 'stdout_s%06d.txt' % sgejob_idx), os.path.join(Paths.logdir(stage_name), 'stderr_s%06d.txt' % sgejob_idx)))
+	explogfiles = staticmethod(lambda: (os.path.join(Paths.log, 'stdout_experiment.txt'), os.path.join(Paths.log, 'stderr_experiment.txt')))
 
 	@staticmethod
 	def init(exp_py, root, htmlroot = None, htmlrootalias = None):
@@ -45,7 +47,7 @@ class Paths:
 		Paths.sgejob = os.path.join(Paths.experiment_root, 'sge')
 		Paths.all_dirs = [Paths.root, Paths.experiment_root, Paths.log, Paths.job, Paths.sgejob]
 
-class Sge:
+class SGE:
 	@staticmethod
 	def get_jobs(job_name_prefix, state = ''):
 		return [elem for elem in xml.dom.minidom.parseString(subprocess.check_output(['qstat', '-xml'])).documentElement.getElementsByTagName('job_list') if elem.getElementsByTagName('JB_name')[0].firstChild.data.startswith(job_name_prefix) and elem.getElementsByTagName('state')[0].firstChild.data.startswith(state)]
@@ -205,44 +207,17 @@ def html(e):
 		<script type="text/javascript">
 			var report = %s;
 
-			function show_job(stage_name, job_name)
-			{
-				var stats_keys_reduced_experiment = ['name_code', 'experiment_root', 'html_root', 'argv_joined'];
-				var stats_keys_reduced_stage = ['mem_lo_gb', 'mem_hi_gb'];
-				var stats_keys_reduced_job = ['exit_code', 'wall_clock_time_seconds'];
-				var stats_keys_extended_job = ['time_started', 'time_finished', 'user_time_seconds', 'system_time_seconds', 'max_rss_kbytes', 'avg_rss_kbytes', 'major_page_faults', 'minor_page_faults', 'voluntary_context_switches', 'involuntary_context_switches', 'inputs', 'outputs', 'signals_received', 'cpu_percentage', 'stdout_path', 'stderr_path'];
-
-				$('#divExp').html($('#tmplExp').render(report));
-				for(var i = 0; i < report.stages.length; i++)
-				{
-					if('#' + report.stages[i].name == stage_name)
-					{
-						$('#divJobs').html($('#tmplJobs').render(report.stages[i]));
-						for(var j = 0; j < report.stages[i].jobs.length; j++)
-						{
-							if('/' + report.stages[i].jobs[j].name == job_name)
-							{
-								$('#divDetails').html($('#tmplDetails').render(report.stages[i].jobs[j], {header : report.stages[i].jobs[j].name, stats_keys_reduced : stats_keys_reduced_job, stats_keys_extended : stats_keys_extended_job}));
-								return;
-							}
-						}
-
-						$('#divDetails').html($('#tmplDetails').render(report.stages[i], {stats_keys_reduced : stats_keys_reduced_stage}));
-						return;
-					}
-				}
-				$('#divJobs').html('');
-				$('#divDetails').html($('#tmplDetails').render(report, {show_logs : false, stats_keys_reduced : stats_keys_reduced_experiment}))
-			}
-
 			$(function() {
 				$.views.helpers({
+					sortedkeys : function(obj, exclude) {
+						return $.grep(Object.keys(obj).sort(), function(x) {return $.inArray(x, exclude || []);})
+					},
 					format : function(name, value) {
 						var return_name = arguments.length == 1;
 						if(!return_name && value == undefined)
 							return '';
 
-						if(name.indexOf('seconds') > 0)
+						if(name.indexOf('seconds') >= 0)
 						{
 							name = name + ' (h:m:s)'
 							if(return_name)
@@ -253,7 +228,7 @@ def html(e):
 							var divisor_for_minutes = seconds %% (60 * 60);
 							return hours + ":" + Math.floor(divisor_for_minutes / 60) + ":" + Math.ceil(divisor_for_minutes %% 60);
 						}
-						else if(name.indexOf('kbytes') > 0)
+						else if(name.indexOf('kbytes') >= 0)
 						{
 							name = name + ' (Gb)'
 							if(return_name)
@@ -268,7 +243,38 @@ def html(e):
 				$(window).on('hashchange', function() {
 					var re = /(\#[^\/]+)?(\/.+)?/;
 					var groups = re.exec(window.location.hash);
-					show_job(groups[1], groups[2]);
+					var stage_name = groups[1], job_name = groups[2];
+
+					var stats_keys_reduced_experiment = ['name_code', 'time_started', 'time_finished'];
+					var stats_keys_reduced_stage = ['time_wall_clock_avg_seconds'];
+					var stats_keys_reduced_job = ['exit_code', 'time_wall_clock_seconds'];
+
+					var render_details = function(obj, ctx) {
+						$('#divDetails').html($('#tmplDetails').render(obj, ctx));
+						$('#stats-toggle').tooltip({trigger : 'manual'}).tooltip('show');
+					};
+			
+					$('#divExp').html($('#tmplExp').render(report));
+					for(var i = 0; i < report.stages.length; i++)
+					{
+						if('#' + report.stages[i].name == stage_name)
+						{
+							$('#divJobs').html($('#tmplJobs').render(report.stages[i]));
+							for(var j = 0; j < report.stages[i].jobs.length; j++)
+							{
+								if('/' + report.stages[i].jobs[j].name == job_name)
+								{
+									render_details(report.stages[i].jobs[j], {header : report.stages[i].jobs[j].name, stats_keys_reduced : stats_keys_reduced_job});
+									return;
+								}
+							}
+
+							render_details(report.stages[i], {stats_keys_reduced : stats_keys_reduced_stage});
+							return;
+						}
+					}
+					$('#divJobs').html('');
+					render_details(report, {stats_keys_reduced : stats_keys_reduced_experiment});
 				}).trigger('hashchange');
 			});
 
@@ -319,27 +325,22 @@ def html(e):
 				<div class="col-sm-4 experiment-pane" id="divDetails"></div>
 				<script type="text/x-jsrender" id="tmplDetails">
 					<h1>{{>~header}}&nbsp;</h1>
-					<h3>stats</h3>
+					<h3><a id="stats-toggle" data-toggle="collapse" data-target=".table-stats-extended" data-placement="right" title="toggle all">stats &amp; config</a></h3>
 					<table class="table table-striped">
-						{{for ~stats_keys_reduced ~stats=stats ~row_class="" tmpl="#tmplStats" /}}
-						{{for ~stats_keys_extended ~stats=stats ~row_class="collapse table-stats-extended" tmpl="#tmplStats" /}}
+						{{for ~stats_keys_reduced ~stats=stats tmpl="#tmplStats" /}}
+						{{for ~sortedkeys(stats, ~stats_keys_reduced) ~stats=stats tmpl="#tmplStats" ~row_class="collapse table-stats-extended" /}}
 					</table>
-					{{if ~stats_keys_extended}}
-					<a class="btn btn-info" data-toggle="collapse" data-target=".table-stats-extended">Toggle all stats</a>
-					{{/if}}
-					{{if ~show_logs != false}}
 					<h3>stdout</h3>
 					<pre>{{>stdout}}</pre>
 					<h3>stderr</h3>
 					<pre>{{>stderr}}</pre>
-					{{/if}}
-					{{if env || config}}
-					<h3>{{if env}}env{{else}}config{{/if}}</h3>
+					{{if env}}
+					<h3>env</h3>
 					<table class="table table-striped">
-						{{props env || config}}
+						{{for ~sortedkeys(env) ~env=env}}
 						<tr>
-							<th>{{>key}}</th>
-							<td>{{>prop}}</td>
+							<th>{{>#data}}</th>
+							<td>{{>~env[#data]}}</td>
 						</tr>
 						{{else}}
 						<tr>
@@ -365,29 +366,37 @@ def html(e):
 	read_or_empty = lambda x: open(x).read() if os.path.exists(x) else ''
 	sgejoblog = lambda stage, k: '\n'.join(['#SGEJOB #%d (%s)\n%s\n\n' % (sgejob_idx, log_file_path, read_or_empty(log_file_path)) for log_file_path in [Paths.sgejoblogfiles(stage.name, sgejob_idx)[k] for sgejob_idx in range(len(stage.jobs))]])
 
-	j = {'name' : e.name, 'stages' : [], 'stats' : {'experiment_root' : Paths.experiment_root, 'name_code' : e.name_code, 'html_root' : Paths.html_root, 'argv_joined' : ' '.join(['"%s"' % arg if ' ' in arg else arg for arg in sys.argv])}, 'config' : {k : v for k, v in config.__dict__.items() if '__' not in k}}
+	stdout_path, stderr_path = Paths.explogfiles()
+	stdout, stderr = map(read_or_empty, [stdout_path, stderr_path])
+	time_started = re.search('expsge_exp_started = (.+)$', stderr, re.MULTILINE)
+	time_finished = re.search('expsge_exp_finished = (.+)$', stderr, re.MULTILINE)
+
+	j = {'name' : e.name, 'stages' : [], 'stats' : {'time_started' : time_started.group(1) if time_started else None, 'time_finished' : time_finished.group(1) if time_finished else None, 'stdout_path' : stdout_path, 'stderr_path' : stderr_path, 'experiment_root' : Paths.experiment_root, 'name_code' : e.name_code, 'html_root' : Paths.html_root, 'argv_joined' : ' '.join(['"%s"' % arg if ' ' in arg else arg for arg in sys.argv])}, 'stdout' : stdout, 'stderr' : stderr}
+	j['stats'].update({k : v for k, v in config.__dict__.items() if '__' not in k})
 	for stage in e.stages:
 		jobs = []
 		for job_idx, job in enumerate(stage.jobs):
 			stdout_path, stderr_path = Paths.joblogfiles(stage.name, job_idx)
 			stdout, stderr = map(read_or_empty, [stdout_path, stderr_path])
+			if stdout != None and len(stdout) > config.max_stdout_characters:
+				half = config.max_stdout_characters / 2
+				stdout = stdout[:half] + '\n\n[%d characters skipped]\n\n' % (len(stdout) - 2 * half) + stdout[-half:]
+			
 			stats = {'stdout_path' : stdout_path, 'stderr_path' : stderr_path}
-			time_output = re.search('time_output = (.+)$', stderr, re.MULTILINE)
+			usrbintime_output = re.search('expsge_usrbintime_output = (.+)$', stderr, re.MULTILINE)
 			time_started = re.search('expsge_job_started = (.+)$', stderr, re.MULTILINE)
 			time_finished = re.search('expsge_job_finished = (.+)$', stderr, re.MULTILINE)
-			if time_output:
-				stats.update(json.loads(time_output.group(1)))
+			if usrbintime_output:
+				stats.update(json.loads(usrbintime_output.group(1)))
 			if time_started:
 				stats['time_started'] = time_started.group(1)
 			if time_finished:
 				stats['time_finished'] = time_finished.group(1)
 
-			if stdout != None and len(stdout) > config.max_stdout_characters:
-				half = config.max_stdout_characters / 2
-				stdout = stdout[:half] + '\n\n[%d characters skipped]\n\n' % (len(stdout) - 2 * half) + stdout[-half:]
 			jobs.append({'name' : job.name, 'stdout' : stdout, 'stderr' : stderr, 'status' : job.status, 'stats' : stats, 'env' : {k : str(v) for k, v in job.env.items()}})
 		stdout, stderr = sgejoblog(stage, 0), sgejoblog(stage, 1)
-		j['stages'].append({'name' : stage.name, 'jobs' : jobs, 'status' : stage.calculate_aggregate_status(), 'stdout' : stdout, 'stderr' : stderr, 'stats' : {'mem_lo_gb' : stage.mem_lo_gb, 'mem_hi_gb' : stage.mem_hi_gb}})
+		time_wall_clock_avg_seconds = filter(lambda x: x != None, [j_job['stats'].get('time_wall_clock_seconds') for j_job in jobs])
+		j['stages'].append({'name' : stage.name, 'jobs' : jobs, 'status' : stage.calculate_aggregate_status(), 'stdout' : stdout, 'stderr' : stderr, 'stats' : {'mem_lo_gb' : stage.mem_lo_gb, 'mem_hi_gb' : stage.mem_hi_gb, 'time_wall_clock_avg_seconds' : sum(time_wall_clock_avg_seconds) / len(time_wall_clock_avg_seconds) if time_wall_clock_avg_seconds else None}})
 			
 	with open(Paths.html_report, 'w') as f:
 		f.write(HTML_PATTERN % (e.name_code, json.dumps(j)))
@@ -423,9 +432,9 @@ def gen(e):
 					'#$ -q %s' % stage.queue if stage.queue else '',
 					'',
 					'# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, job.name, job_idx),
-					'echo "expsge_job_started = $(date)" > "%s"' % job_stderr_path,
-					'''/usr/bin/time -f 'time_output = {"exit_code" : %%x, "user_time_seconds" : %%U, "system_time_seconds" : %%S, "wall_clock_time_seconds" : %%e, "max_rss_kbytes" : %%M, "avg_rss_kbytes" : %%t, "major_page_faults" : %%F, "minor_page_faults" : %%R, "inputs" : %%I, "outputs" : %%O, "voluntary_context_switches" : %%w, "involuntary_context_switches" : %%c, "cpu_percentage" : "%%P", "signals_received" : %%k}' bash -e "%s" > "%s" 2>> "%s"''' % ((Paths.jobfile(stage.name, job_idx), ) + Paths.joblogfiles(stage.name, job_idx)),
-					'echo "expsge_job_finished = $(date)" >> "%s"' % job_stderr_path,
+					'echo "expsge_job_started = $(date +"%s")" > "%s"' % (job_stderr_path, config.time_format),
+					'''/usr/bin/time -f 'expsge_usrbintime_output = {"exit_code" : %%x, "time_user_seconds" : %%U, "time_system_seconds" : %%S, "time_wall_clock_seconds" : %%e, "rss_max_kbytes" : %%M, "rss_avg_kbytes" : %%t, "page_faults_major" : %%F, "page_faults_minor" : %%R, "io_inputs" : %%I, "io_outputs" : %%O, "context_switches_voluntary" : %%w, "context_switches_involuntary" : %%c, "cpu_percentage" : "%%P", "signals_received" : %%k}' bash -e "%s" > "%s" 2>> "%s"''' % ((Paths.jobfile(stage.name, job_idx), ) + Paths.joblogfiles(stage.name, job_idx)),
+					'echo "expsge_job_finished = $(date +"%s")" >> "%s"' % (job_stderr_path, config.time_format),
 					'# end',
 					'']))
 
@@ -444,7 +453,7 @@ def run(dry, verbose):
 	if dry:
 		print 'Dry run. Quitting.'
 		return
-
+	
 	def update_status(stage):
 		for job_idx, job in enumerate(stage.jobs):
 			stderr_path = Paths.joblogfiles(stage.name, job_idx)[1]
@@ -454,12 +463,12 @@ def run(dry, verbose):
 				job.status = Experiment.ExecutionStatus.running
 			if 'Command exited with non-zero status' in stderr:
 				job.status = Experiment.ExecutionStatus.failure
-			if '"exit_code": 0' in stderr:
+			if '"exit_code" : 0' in stderr:
 				job.status = Experiment.ExecutionStatus.success
 
 	def wait_if_more_jobs_than(stage, job_name_prefix, num_jobs):
-		while len(Sge.get_jobs(job_name_prefix)) > num_jobs:
-			msg = 'Running %d jobs, waiting %d jobs.' % (len(Sge.get_jobs(job_name_prefix, 'r')), len(Sge.get_jobs(job_name_prefix, 'qw')))
+		while len(SGE.get_jobs(job_name_prefix)) > num_jobs:
+			msg = 'Running %d jobs, waiting %d jobs.' % (len(SGE.get_jobs(job_name_prefix, 'r')), len(SGE.get_jobs(job_name_prefix, 'qw')))
 			if verbose:
 				print msg
 			time.sleep(config.sleep_between_queue_checks)
@@ -469,12 +478,15 @@ def run(dry, verbose):
 		update_status(stage)
 		html(e)
 	
+	with open(Paths.explogfiles()[1], 'w') as f:
+		f.write('expsge_exp_started = %s\n' % time.strftime(config.time_format))
+
 	for stage_idx, stage in enumerate(e.stages):
 		print 'Starting stage #%d [%s], with %d jobs.' % (stage_idx, stage.name, len(stage.jobs))
 		for job_idx in range(len(stage.jobs)):
 			sgejob_idx = job_idx
 			wait_if_more_jobs_than(stage, e.name_code, config.maximum_simultaneously_submitted_jobs)
-			Sge.submit_job(Paths.sgejobfile(stage.name, sgejob_idx))
+			SGE.submit_job(Paths.sgejobfile(stage.name, sgejob_idx))
 			stage.jobs[job_idx].status = Experiment.ExecutionStatus.submitted
 
 		wait_if_more_jobs_than(stage, e.name_code, 0)
@@ -482,13 +494,17 @@ def run(dry, verbose):
 		update_status(stage)
 		if e.has_failed_stages():
 			e.cancel_stages(stage)
-			print 'Stage [%s] failed. Stopping the experiment. Quitting.' % stage.name
+			print 'Stage [%s] failed. Stopping the experiment.' % stage.name
 			break
+	
+	with open(Paths.explogfiles()[1], 'a') as f:
+		f.write('expsge_exp_finished = %s\n' % time.strftime(config.time_format))
 
+	html(e)
 	print '\nDone.'
 
 def stop():
-	Sge.delete_jobs(Sge.get_jobs(init().name_code))
+	SGE.delete_jobs(SGE.get_jobs(init().name_code))
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
