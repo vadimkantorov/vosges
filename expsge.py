@@ -1,15 +1,9 @@
-#TODO: remember job ids, check if jobs were killed
-#TODO: nice console output (with ok-failed wigwam-styled messages with stage times)
-#TODO: duplicate console output in experiment stdout
-#TODO: http post when a job is failed / canceled
-#TODO: refactor cmd line args <-> config
-
 import os
 import re
 import sys
-import time
 import math
 import json
+import time
 import shutil
 import hashlib
 import argparse
@@ -19,12 +13,20 @@ import xml.dom.minidom
 
 class config:
 	maximum_simultaneously_submitted_jobs = 4
-	sleep_between_queue_checks = 2
-	mem_lo_gb = 10
-	mem_hi_gb = 64
-	max_stdout_characters = 1024
+	sleep_between_queue_checks = 2.0
+	mem_lo_gb = 10.0
+	mem_hi_gb = 64.0
+	max_stdout_characters = 2048
 	job_batch_size = 1
 	time_format = '%d/%m/%Y %H:%M:%S'
+	root = './expsge'
+	html_root = None
+	html_root_alias = None
+	notification_command_on_error = None
+	notification_command_on_success = None
+	notify = False
+
+	items = staticmethod(lambda: [(k, v) for k, v in vars(config).items() if '__' not in k and k != 'items'])
 
 class P:
 	jobdir = staticmethod(lambda stage_name: os.path.join(P.job, stage_name))
@@ -37,27 +39,33 @@ class P:
 	explogfiles = staticmethod(lambda: (os.path.join(P.log, 'stdout_experiment.txt'), os.path.join(P.log, 'stderr_experiment.txt')))
 
 	@staticmethod
-	def init(exp_py, root = None, htmlroot = None, htmlrootalias = None):
+	def read_or_empty(file_path):
+		subprocess.check_call(['touch', file_path]) # workaround for NFS caching
+		return open(file_path).read() if os.path.exists(file_path) else ''
+
+	@staticmethod
+	def init(exp_py):
 		P.exp_py = os.path.abspath(exp_py)
 		P.locally_generated_script = os.path.abspath(os.path.basename(exp_py) + '.generated.sh')
 		P.experiment_name_code = os.path.basename(P.exp_py) + '_' + hashlib.md5(P.exp_py).hexdigest()[:3].upper()
 		
-		P.root = os.path.abspath(getattr(config, 'root') or root)
-		P.html_root = getattr(config, 'htmlroot') or htmlroot or os.path.join(P.root, 'html')
-		P.html_root_alias = getattr(config, 'htmlrootalias') or htmlrootalias
-		P.html_report_file_name = P.experiment_name_code + '.html'
-		P.html_report = os.path.join(P.html_root, P.html_report_file_name)
+		P.root = os.path.abspath(config.root)
+		P.html_root = config.html_root or os.path.join(P.root, 'html')
+		P.html_root_alias = config.html_root_alias
+		html_report_file_name = P.experiment_name_code + '.html'
+		P.html_report = os.path.join(P.html_root, html_report_file_name)
+		P.html_report_link = os.path.join(P.html_root_alias or P.html_root, html_report_file_name)
 
 		P.experiment_root = os.path.join(P.root, P.experiment_name_code)
 		P.log = os.path.join(P.experiment_root, 'log')
 		P.job = os.path.join(P.experiment_root, 'job')
 		P.sgejob = os.path.join(P.experiment_root, 'sge')
-		P.all_dirs = [P.root, P.experiment_root, P.log, P.job, P.sgejob]
+		P.all_dirs = [P.root, P.html_root, P.experiment_root, P.log, P.job, P.sgejob]
 
 class Q:
 	@staticmethod
 	def get_jobs(job_name_prefix, state = ''):
-		return [elem for elem in xml.dom.minidom.parseString(subprocess.check_output(['qstat', '-xml'])).documentElement.getElementsByTagName('job_list') if elem.getElementsByTagName('JB_name')[0].firstChild.data.startswith(job_name_prefix) and elem.getElementsByTagName('state')[0].firstChild.data.startswith(state)]
+		return [int(elem.getElementsByTagName('JB_job_number')[0].firstChild.data) for elem in xml.dom.minidom.parseString(subprocess.check_output(['qstat', '-xml'])).documentElement.getElementsByTagName('job_list') if elem.getElementsByTagName('JB_name')[0].firstChild.data.startswith(job_name_prefix) and elem.getElementsByTagName('state')[0].firstChild.data.startswith(state)]
 	
 	@staticmethod
 	def submit_job(sgejob_file):
@@ -65,7 +73,7 @@ class Q:
 
 	@staticmethod
 	def delete_jobs(jobs):
-		subprocess.check_call(['qdel'] + [elem.getElementsByTagName('JB_job_number')[0].firstChild.data for elem in jobs])
+		subprocess.check_call(['qdel'] + map(str, jobs))
 
 class path:
 	def __init__(self, string, mkdirs = False):
@@ -92,6 +100,7 @@ class Experiment:
 		running = 'running'
 		success = 'success'
 		error = 'error'
+		killed = 'killed'
 		canceled = 'canceled'
 
 	class Job:
@@ -116,14 +125,14 @@ class Experiment:
 
 		def calculate_aggregate_status(self):
 			conditions = {
-				Experiment.ExecutionStatus.waiting : [],
-				Experiment.ExecutionStatus.submitted : [Experiment.ExecutionStatus.waiting],
-				Experiment.ExecutionStatus.running : [Experiment.ExecutionStatus.waiting, Experiment.ExecutionStatus.submitted, Experiment.ExecutionStatus.success],
-				Experiment.ExecutionStatus.success : [],
-				Experiment.ExecutionStatus.error : None,
-				Experiment.ExecutionStatus.canceled: []
+				(Experiment.ExecutionStatus.waiting, ) : (),
+				(Experiment.ExecutionStatus.submitted, ) : (Experiment.ExecutionStatus.waiting, ),
+				(Experiment.ExecutionStatus.running, ) : (Experiment.ExecutionStatus.waiting, Experiment.ExecutionStatus.submitted, Experiment.ExecutionStatus.success),
+				(Experiment.ExecutionStatus.success, ) : (),
+				(Experiment.ExecutionStatus.error, Experiment.ExecutionStatus.killed) : None,
+				(Experiment.ExecutionStatus.canceled, ): ()
 			}
-			return [status for status, extra_statuses in conditions.items() if any([job.status == status for job in self.jobs]) and (extra_statuses == None or all([job.status in [status] + extra_statuses for job in self.jobs]))][0]
+			return [status[0] for status, extra_statuses in conditions.items() if any([job.status in status for job in self.jobs]) and (extra_statuses == None or all([job.status in status + extra_statuses for job in self.jobs]))][0]
 
 		def job_batch_count(self):
 			return int(math.ceil(float(len(self.jobs)) / self.job_batch_size))
@@ -184,7 +193,7 @@ def init():
 def clean():
 	if os.path.exists(P.experiment_root):
 		shutil.rmtree(P.experiment_root)
-
+	
 def html(e):
 	HTML_PATTERN = '''
 <!DOCTYPE html>
@@ -207,6 +216,7 @@ def html(e):
 			.job-status-running {background-color: lightgreen}
 			.job-status-success {background-color: green}
 			.job-status-error {background-color: red}
+			.job-status-killed {background-color: orange}
 			.job-status-canceled {background-color: salmon}
 		</style>
 	</head>
@@ -341,6 +351,10 @@ def html(e):
 					<pre>{{>stdout}}</pre>
 					<h3>stderr</h3>
 					<pre>{{>stderr}}</pre>
+					{{if script}}
+					<h3>script</h3>
+					<pre>{{>script}}</pre>
+					{{/if}}
 					{{if env}}
 					<h3>env</h3>
 					<table class="table table-striped">
@@ -370,24 +384,20 @@ def html(e):
 </html>
 	'''
 
-	def read_or_empty(file_path):
-		subprocess.check_call(['touch', file_path])
-		return open(file_path).read() if os.path.exists(file_path) else ''
-
-	sgejoblog = lambda stage, k: '\n'.join(['#SGEJOB #%d (%s)\n%s\n\n' % (sgejob_idx, log_file_path, read_or_empty(log_file_path)) for log_file_path in [P.sgejoblogfiles(stage.name, sgejob_idx)[k] for sgejob_idx in range(stage.job_batch_count())]])
+	sgejoblog = lambda stage, k: '\n'.join(['#SGEJOB #%d (%s)\n%s\n\n' % (sgejob_idx, log_file_path, P.read_or_empty(log_file_path)) for log_file_path in [P.sgejoblogfiles(stage.name, sgejob_idx)[k] for sgejob_idx in range(stage.job_batch_count())]])
 
 	stdout_path, stderr_path = P.explogfiles()
-	stdout, stderr = map(read_or_empty, [stdout_path, stderr_path])
+	stdout, stderr = map(P.read_or_empty, [stdout_path, stderr_path])
 	time_started = re.search('%expsge exp_started = (.+)$', stderr, re.MULTILINE)
 	time_finished = re.search('%expsge exp_finished = (.+)$', stderr, re.MULTILINE)
 
-	j = {'name' : e.name, 'stages' : [], 'stats' : {'time_started' : time_started.group(1) if time_started else None, 'time_finished' : time_finished.group(1) if time_finished else None, 'time_updated' : time.strftime(config.time_format), 'stdout_path' : stdout_path, 'stderr_path' : stderr_path, 'experiment_root' : P.experiment_root, 'name_code' : e.name_code, 'html_root' : P.html_root, 'argv_joined' : ' '.join(['"%s"' % arg if ' ' in arg else arg for arg in sys.argv])}, 'stdout' : stdout, 'stderr' : stderr}
-	j['stats'].update({'config.' + k : v for k, v in config.__dict__.items() if '__' not in k})
+	j = {'name' : e.name, 'stages' : [], 'stats' : {'time_started' : time_started.group(1) if time_started else None, 'time_finished' : time_finished.group(1) if time_finished else None, 'time_updated' : time.strftime(config.time_format), 'stdout_path' : stdout_path, 'stderr_path' : stderr_path, 'experiment_root' : P.experiment_root, 'name_code' : e.name_code, 'html_root' : P.html_root, 'argv_joined' : ' '.join(['"%s"' % arg if ' ' in arg else arg for arg in sys.argv])}, 'stdout' : stdout, 'stderr' : stderr, 'script' : P.read_or_empty(P.exp_py)}
+	j['stats'].update({'config.' + k : v for k, v in config.items()})
 	for stage in e.stages:
 		jobs = []
 		for job_idx, job in enumerate(stage.jobs):
 			stdout_path, stderr_path = P.joblogfiles(stage.name, job_idx)
-			stdout, stderr = map(read_or_empty, [stdout_path, stderr_path])
+			stdout, stderr = map(P.read_or_empty, [stdout_path, stderr_path])
 			if stdout != None and len(stdout) > config.max_stdout_characters:
 				half = config.max_stdout_characters / 2
 				stdout = stdout[:half] + '\n\n[%d characters skipped]\n\n' % (len(stdout) - 2 * half) + stdout[-half:]
@@ -396,12 +406,15 @@ def html(e):
 			usrbintime_output = re.search('%expsge usrbintime_output = (.+)$', stderr, re.MULTILINE)
 			time_started = re.search('%expsge job_started = (.+)$', stderr, re.MULTILINE)
 			time_finished = re.search('%expsge job_finished = (.+)$', stderr, re.MULTILINE)
+			hostname = re.search('%expsge hostname = (.+)$', stderr, re.MULTILINE)
 			if usrbintime_output:
 				stats.update(json.loads(usrbintime_output.group(1)))
 			if time_started:
 				stats['time_started'] = time_started.group(1)
 			if time_finished:
 				stats['time_finished'] = time_finished.group(1)
+			if hostname:
+				stats['hostname'] = hostname.group(1)
 
 			jobs.append({'name' : job.name, 'stdout' : stdout, 'stderr' : stderr, 'status' : job.status, 'stats' : stats, 'env' : {k : str(v) for k, v in job.env.items()}})
 		stdout, stderr = sgejoblog(stage, 0), sgejoblog(stage, 1)
@@ -415,7 +428,7 @@ def gen(e = None, locally = None):
 	if e == None:
 		e = init()
 
-	print 'Generating the experiment in "%s"' % (P.locally_generated_script if locally else P.experiment_root)
+	print '%-30s "%s"' % ('Generating the experiment to:', P.locally_generated_script if locally else P.experiment_root)
 	
 	for p in [p for stage in e.stages for job in stage.jobs for p in job.get_used_paths() if p.mkdirs == True and not os.path.exists(str(p))]:
 		os.makedirs(str(p))
@@ -454,6 +467,7 @@ def gen(e = None, locally = None):
 					f.write('\n'.join([
 						'# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, stage.jobs[job_idx].name, job_idx),
 						'echo "%%expsge job_started = $(date +"%s")" > "%s"' % (config.time_format, job_stderr_path),
+						'echo "%%expsge hostname = $(hostname)" >> "%s"' % job_stderr_path,
 						'''/usr/bin/time -f '%%%%expsge usrbintime_output = {"exit_code" : %%x, "time_user_seconds" : %%U, "time_system_seconds" : %%S, "time_wall_clock_seconds" : %%e, "rss_max_kbytes" : %%M, "rss_avg_kbytes" : %%t, "page_faults_major" : %%F, "page_faults_minor" : %%R, "io_inputs" : %%I, "io_outputs" : %%O, "context_switches_voluntary" : %%w, "context_switches_involuntary" : %%c, "cpu_percentage" : "%%P", "signals_received" : %%k}' bash -e "%s" > "%s" 2>> "%s"''' % ((P.jobfile(stage.name, job_idx), ) + P.joblogfiles(stage.name, job_idx)),
 						'echo "%%expsge job_finished = $(date +"%s")" >> "%s"' % (config.time_format, job_stderr_path),
 						'# end',
@@ -465,9 +479,7 @@ def run(dry, verbose):
 	e = init()
 	gen(e)
 
-	print 'The report is available at%s:' % (' (provided htmlrootalias used)' if P.html_root_alias else '')
-	print ''
-	print os.path.join(P.html_root_alias or P.html_root, P.html_report_file_name)
+	print '%-30s "%s"' % ('Report is at:', P.html_report_link)
 	print ''
 
 	html(e)
@@ -475,24 +487,37 @@ def run(dry, verbose):
 	if dry:
 		print 'Dry run. Quitting.'
 		return
-	
+
+	class explog:
+		stdout, stderr = map(lambda log_path: open(log_path, 'w'), P.explogfiles())
+		def __init__(self, s, write_to_stdout = True, new_line = '\n'):
+			explog.stderr.write(s + new_line)
+			explog.stderr.flush()
+			if write_to_stdout:
+				explog.stdout.write(s + new_line)
+				explog.stdout.flush()
+				sys.stdout.write(s + new_line)
+				sys.stdout.flush()
+
+	sgejob2job = {}
+
 	def update_status(stage):
+		active_jobs = [job for sgejob in Q.get_jobs(e.name_code) for job in sgejob2job[sgejob]]
+		
 		for job_idx, job in enumerate(stage.jobs):
-			stderr_path = P.joblogfiles(stage.name, job_idx)[1]
-			subprocess.check_call(['touch', stderr_path])
-			stderr = open(stderr_path).read() if os.path.exists(stderr_path) else ''
+			stderr = P.read_or_empty(P.joblogfiles(stage.name, job_idx)[1])
 			if '%expsge job_started' in stderr:
 				job.status = Experiment.ExecutionStatus.running
 			if 'Command exited with non-zero status' in stderr:
 				job.status = Experiment.ExecutionStatus.error
 			if '"exit_code" : 0' in stderr:
 				job.status = Experiment.ExecutionStatus.success
+			if job.status == Experiment.ExecutionStatus.running and job not in active_jobs:
+				job.status = Experiment.ExecutionStatus.killed
 
-	def wait_if_more_jobs_than(stage, job_name_prefix, num_jobs):
-		while len(Q.get_jobs(job_name_prefix)) > num_jobs:
-			msg = 'Running %d jobs, waiting %d jobs.' % (len(Q.get_jobs(job_name_prefix, 'r')), len(Q.get_jobs(job_name_prefix, 'qw')))
-			if verbose:
-				print msg
+	def wait_if_more_jobs_than(stage, num_jobs):
+		while len(Q.get_jobs(e.name_code)) > num_jobs:
+			explog('Running %d jobs, waiting %d jobs.' % (len(Q.get_jobs(e.name_code, 'r')), len(Q.get_jobs(e.name_code, 'qw'))), verbose)
 			time.sleep(config.sleep_between_queue_checks)
 			update_status(stage)
 			html(e)
@@ -500,39 +525,59 @@ def run(dry, verbose):
 		update_status(stage)
 		html(e)
 	
-	with open(P.explogfiles()[1], 'w') as f:
-		f.write('%%expsge exp_started = %s\n' % time.strftime(config.time_format))
+	explog('%%expsge exp_started = %s\n' % time.strftime(config.time_format), False)
 
 	for stage_idx, stage in enumerate(e.stages):
-		print '#%d. %s (%d jobs)' % (1 + stage_idx, stage.name, len(stage.jobs))
+		time_started = time.time()
+		explog('%-30s ' % ('%s (%d jobs)' % (stage.name, len(stage.jobs))), new_line = '')
 		for sgejob_idx in range(stage.job_batch_count()):
-			#wait_if_more_jobs_than(stage, e.name_code, config.maximum_simultaneously_submitted_jobs)
-			Q.submit_job(P.sgejobfile(stage.name, sgejob_idx))
+			wait_if_more_jobs_than(stage, config.maximum_simultaneously_submitted_jobs)
+			sgejob = Q.submit_job(P.sgejobfile(stage.name, sgejob_idx))
+			sgejob2job[sgejob] = [stage.jobs[job_idx] for job_idx in stage.calculate_job_range(sgejob_idx)]
 			for job_idx in stage.calculate_job_range(sgejob_idx):
 				stage.jobs[job_idx].status = Experiment.ExecutionStatus.submitted
 
-		wait_if_more_jobs_than(stage, e.name_code, 0)
+		wait_if_more_jobs_than(stage, 0)
+		elapsed = int(time.time() - time_started)
+		elapsed = '%dh%dm' % (elapsed / 3600, math.ceil(float(elapsed % 3600) / 60))
 
 		if e.has_failed_stages():
 			e.cancel_stages_after(stage)
-			print 'Stage [%s] failed. Stopping the experiment.' % stage.name
+			explog('[error, elapsed %s]' % elapsed)
+			explog('')
+			explog('Stopping the experiment. Skipped stages: %s' % ','.join([e.stages[si].name for si in range(stage_idx + 1, len(e.stages))]))
+			if config.notification_command_on_error and config.notify:
+				explog('Executing custom notification_command_on_error.')
+				explog('Exit code: %d' % subprocess.call(config.notification_command_on_error.replace('$NAME_CODE', e.name_code).replace('$HTML_REPORT_LINK', P.html_report_link).replace('$FAILED_STAGE', stage.name), shell = True, stdout = explog.stderr))
 			break
+		else:
+			explog('[ok, elapsed %s]' % elapsed)
 	
-	with open(P.explogfiles()[1], 'a') as f:
-		f.write('%%expsge exp_finished = %s\n' % time.strftime(config.time_format))
+	explog('%%expsge exp_finished = %s' % time.strftime(config.time_format), False)
 
+	if not e.has_failed_stages() and config.notification_command_on_success and config.notify:
+		explog('Executing custom notification_command_on_success.')
+		explog('Exit code: %d' % subprocess.call(config.notification_command_on_success.replace('$NAME_CODE', e.name_code).replace('$HTML_REPORT_LINK', P.html_report_link), shell = True, stdout = explog.stderr, stderr = explog.stderr))
+
+	explog('\nALL OK. KTHXBAI!')
+	
+	explog.stdout.close()
+	explog.stderr.close()
 	html(e)
-	print '\nDone.'
 
 def stop():
 	Q.delete_jobs(Q.get_jobs(init().name_code))
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
-	parser.add_argument('--root', default = 'expsge')
-	parser.add_argument('--htmlroot')
-	parser.add_argument('--htmlrootalias')
 	parser.add_argument('--rcfile', default = os.path.expanduser('~/.expsgerc'))
+	for k, v in config.items():
+		args_type = type(v) if v != None else str
+		if args_type == bool:
+			parser.add_argument('--' + k, action = 'store_true')
+		else:
+			parser.add_argument('--' + k, type = args_type)
+
 	subparsers = parser.add_subparsers()
 
 	cmd = subparsers.add_parser('gen')
@@ -552,10 +597,16 @@ if __name__ == '__main__':
 	
 	args = vars(parser.parse_args())
 	rcfile, cmd = args.pop('rcfile'), args.pop('func')
+
 	if os.path.exists(rcfile):
 		exec open(rcfile).read() in globals(), globals()
-	P.init(args.pop('exp_py'), args.pop('root'), args.pop('htmlroot'), args.pop('htmlrootalias'))
-	
+
+	for k, v in config.items():
+		arg = args.pop(k)
+		if arg != None:
+			setattr(config, k, arg)
+
+	P.init(args.pop('exp_py'))
 	try:
 		cmd(**args)
 	except KeyboardInterrupt:
