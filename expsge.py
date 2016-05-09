@@ -515,8 +515,12 @@ def run(dry, verbose, notify):
 				job.status = Experiment.ExecutionStatus.killed
 
 	def wait_if_more_jobs_than(stage, num_jobs):
+		prev_msg = None
 		while len(Q.get_jobs(e.name_code)) > num_jobs:
-			explog('Running %d jobs, waiting %d jobs.' % (len(Q.get_jobs(e.name_code, 'r')), len(Q.get_jobs(e.name_code, 'qw'))), verbose)
+			msg = 'Running %d jobs, waiting %d jobs.' % (len(Q.get_jobs(e.name_code, 'r')), len(Q.get_jobs(e.name_code, 'qw')))
+			if msg != prev_msg:
+				explog(msg, verbose)
+				prev_msg = msg
 			time.sleep(config.sleep_between_queue_checks)
 			update_status(stage)
 			html(e)
