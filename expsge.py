@@ -226,7 +226,7 @@ def html(e):
 			$(function() {
 				$.views.helpers({
 					sortedkeys : function(obj, exclude) {
-						return $.grep(Object.keys(obj).sort(), function(x) {return $.inArray(x, exclude || []);})
+						return $.grep(Object.keys(obj).sort(), function(x) {return $.inArray(x, exclude || []) == -1;})
 					},
 					format : function(name, value) {
 						var return_name = arguments.length == 1;
