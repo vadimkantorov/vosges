@@ -24,7 +24,6 @@ class config:
 	html_root_alias = None
 	notification_command_on_error = None
 	notification_command_on_success = None
-	notify = False
 
 	items = staticmethod(lambda: [(k, v) for k, v in vars(config).items() if '__' not in k and k != 'items'])
 
@@ -474,7 +473,7 @@ def gen(e = None, locally = None):
 						''
 					]))
 
-def run(dry, verbose):
+def run(dry, verbose, notify):
 	clean()
 	e = init()
 	gen(e)
@@ -546,7 +545,7 @@ def run(dry, verbose):
 			explog('[error, elapsed %s]' % elapsed)
 			explog('')
 			explog('Stopping the experiment. Skipped stages: %s' % ','.join([e.stages[si].name for si in range(stage_idx + 1, len(e.stages))]))
-			if config.notification_command_on_error and config.notify:
+			if notify and config.notification_command_on_error:
 				explog('Executing custom notification_command_on_error.')
 				explog('Exit code: %d' % subprocess.call(config.notification_command_on_error.replace('$NAME_CODE', e.name_code).replace('$HTML_REPORT_LINK', P.html_report_link).replace('$FAILED_STAGE', stage.name), shell = True, stdout = explog.stderr))
 			break
@@ -555,7 +554,7 @@ def run(dry, verbose):
 	
 	explog('%%expsge exp_finished = %s' % time.strftime(config.time_format), False)
 
-	if not e.has_failed_stages() and config.notification_command_on_success and config.notify:
+	if not e.has_failed_stages() and notify and config.notification_command_on_success:
 		explog('Executing custom notification_command_on_success.')
 		explog('Exit code: %d' % subprocess.call(config.notification_command_on_success.replace('$NAME_CODE', e.name_code).replace('$HTML_REPORT_LINK', P.html_report_link), shell = True, stdout = explog.stderr, stderr = explog.stderr))
 
@@ -572,11 +571,7 @@ if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--rcfile', default = os.path.expanduser('~/.expsgerc'))
 	for k, v in config.items():
-		args_type = type(v) if v != None else str
-		if args_type == bool:
-			parser.add_argument('--' + k, action = 'store_true')
-		else:
-			parser.add_argument('--' + k, type = args_type)
+		parser.add_argument('--' + k, type = type(v) if v != None else str)
 
 	subparsers = parser.add_subparsers()
 
@@ -594,6 +589,7 @@ if __name__ == '__main__':
 	cmd.add_argument('exp_py')
 	cmd.add_argument('--dry', action = 'store_true')
 	cmd.add_argument('--verbose', action = 'store_true')
+	cmd.add_argument('--notify', action = 'store_true')
 	
 	args = vars(parser.parse_args())
 	rcfile, cmd = args.pop('rcfile'), args.pop('func')
