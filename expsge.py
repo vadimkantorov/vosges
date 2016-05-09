@@ -261,7 +261,7 @@ def html(e):
 					var groups = re.exec(window.location.hash);
 					var stage_name = groups[1], job_name = groups[2];
 
-					var stats_keys_reduced_experiment = ['name_code', 'time_started', 'time_finished', 'time_updated'];
+					var stats_keys_reduced_experiment = ['name_code', 'time_updated', 'time_started', 'time_finished'];
 					var stats_keys_reduced_stage = ['time_wall_clock_avg_seconds'];
 					var stats_keys_reduced_job = ['exit_code', 'time_wall_clock_seconds'];
 
