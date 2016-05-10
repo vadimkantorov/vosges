@@ -1,6 +1,7 @@
 #TODO: show rcfile
 #TODO: show all env
 #TODO: make %expsge -> %meta commands accept json
+#TODO: make config call
 
 import os
 import re
@@ -79,22 +80,31 @@ class Q:
 		subprocess.check_call(['qdel'] + map(str, jobs))
 
 class path:
-	def __init__(self, string, mkdirs = False):
-		self.string = string
-		self.mkdirs = mkdirs
+	def __init__(self, *path_parts, env = {}, domakedirs = False, isoutput = False):
+		assert all([part != None for part in path_parts])
 
-	def join(self, *args):
+		self.string = os.path.join(*path_parts)
+		self.domakedirs = domakedirs
+		self.isoutput = isoutput
+		self.env = env
+
+	def join(self, *path_parts):
+		assert all([part != None for part in path_parts])
+
 		return path(os.path.join(self.string, *map(str, args)))
 
 	def makedirs(self):
-		return path(self.string, True)
+		return path(self.string, domakedirs = True, isoutput = self.isoutput, env = self.env)
+
+	def output(self):
+		return path(self.string, domakedirs = self.domakedirs, isoutput = True, env = self.env)
 
 	@staticmethod
 	def cwd():
 		return path(os.getcwd())
 	
 	def __str__(self):
-		return self.string
+		return self.string.format(**self.env)
 
 class Experiment:
 	class ExecutionStatus:
@@ -157,6 +167,9 @@ class Experiment:
 	def run(self, executable, name = None, env = {}, cwd = path.cwd()):
 		name = '_'.join(map(str, name if isinstance(name, tuple) else (name,))) if name != None else str(len(self.stages[-1].jobs))
 		self.stages[-1].jobs.append(Experiment.Job(name, executable, env, cwd))
+
+	def path(self, file_path):
+		return path(file_path, env = {EXPERIMENT_NAME = self.name})
 
 	def has_failed_stages(self):
 		return any([stage.calculate_aggregate_status() == Experiment.ExecutionStatus.error for stage in self.stages])
@@ -437,7 +450,7 @@ def gen(e = None, locally = None):
 
 	print '%-30s "%s"' % ('Generating the experiment to:', P.locally_generated_script if locally else P.experiment_root)
 	
-	for p in [p for stage in e.stages for job in stage.jobs for p in job.get_used_paths() if p.mkdirs == True and not os.path.exists(str(p))]:
+	for p in [p for stage in e.stages for job in stage.jobs for p in job.get_used_paths() if p.domakedirs == True and not os.path.exists(str(p))]:
 		os.makedirs(str(p))
 	
 	generate_job_bash_script_lines = lambda stage, job, job_idx: ['# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, job.name, job_idx )] + map(lambda path: '''if [ ! -e "%s" ]; then echo 'File "%s" does not exist'; exit 1; fi''' % (path, path), job.get_used_paths()) + list(itertools.starmap('export {0}="{1}"'.format, sorted(job.env.items()))) + ['cd "%s"' % job.cwd] + job.executable.generate_bash_script_lines()
