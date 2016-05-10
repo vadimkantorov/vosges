@@ -554,7 +554,7 @@ def run(dry, verbose, notify):
 			explog('Stopping the experiment. Skipped stages: %s' % ','.join([e.stages[si].name for si in range(stage_idx + 1, len(e.stages))]))
 			if notify and config.notification_command_on_error:
 				explog('Executing custom notification_command_on_error.')
-				explog('Exit code: %d' % subprocess.call(config.notification_command_on_error.replace('$NAME_CODE', e.name_code).replace('$HTML_REPORT_LINK', P.html_report_link).replace('$FAILED_STAGE', stage.name).replace('$FAILED_JOB', [job.name for job in stage.jobs if job.has_failed()][0]), shell = True, stdout = explog.stderr))
+				explog('Exit code: %d' % subprocess.call(config.notification_command_on_error.format(NAME_CODE = e.name_code, HTML_REPORT_LINK = P.html_report_link, FAILED_STAGE = stage.name, FAILED_JOB = [job.name for job in stage.jobs if job.has_failed()][0]), shell = True, stdout = explog.stderr))
 			break
 		else:
 			explog('[ok, elapsed %s]' % elapsed)
@@ -563,7 +563,7 @@ def run(dry, verbose, notify):
 
 	if not e.has_failed_stages() and notify and config.notification_command_on_success:
 		explog('Executing custom notification_command_on_success.')
-		explog('Exit code: %d' % subprocess.call(config.notification_command_on_success.replace('$NAME_CODE', e.name_code).replace('$HTML_REPORT_LINK', P.html_report_link), shell = True, stdout = explog.stderr, stderr = explog.stderr))
+		explog('Exit code: %d' % subprocess.call(config.notification_command_on_success.format(NAME_CODE = e.name_code, HTML_REPORT_LINK = P.html_report_link), shell = True, stdout = explog.stderr, stderr = explog.stderr))
 
 	explog('\nALL OK. KTHXBAI!')
 	
