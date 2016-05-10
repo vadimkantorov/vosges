@@ -1,3 +1,7 @@
+#TODO: show rcfile
+#TODO: show all env
+#TODO: make %expsge -> %meta commands accept json
+
 import os
 import re
 import sys
