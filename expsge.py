@@ -550,22 +550,21 @@ def run(dry, verbose, notify):
 		if e.has_failed_stages():
 			e.cancel_stages_after(stage)
 			explog('[error, elapsed %s]' % elapsed)
-			explog('')
-			explog('Stopping the experiment. Skipped stages: %s' % ','.join([e.stages[si].name for si in range(stage_idx + 1, len(e.stages))]))
 			if notify and config.notification_command_on_error:
 				explog('Executing custom notification_command_on_error.')
 				explog('\nExit code: %d' % subprocess.call(config.notification_command_on_error.format(NAME_CODE = e.name_code, HTML_REPORT_LINK = P.html_report_link, FAILED_STAGE = stage.name, FAILED_JOB = [job.name for job in stage.jobs if job.has_failed()][0]), shell = True, stdout = explog.stderr))
+			explog('\nStopping the experiment. Skipped stages: %s' % ','.join([e.stages[si].name for si in range(stage_idx + 1, len(e.stages))]))
 			break
 		else:
 			explog('[ok, elapsed %s]' % elapsed)
 	
 	explog('%%expsge exp_finished = %s' % time.strftime(config.time_format), False)
 
-	if not e.has_failed_stages() and notify and config.notification_command_on_success:
-		explog('Executing custom notification_command_on_success.')
-		explog('Exit code: %d' % subprocess.call(config.notification_command_on_success.format(NAME_CODE = e.name_code, HTML_REPORT_LINK = P.html_report_link), shell = True, stdout = explog.stderr, stderr = explog.stderr))
-
-	explog('\nALL OK. KTHXBAI!')
+	if not e.has_failed_stages():
+		if notify and config.notification_command_on_success:
+			explog('Executing custom notification_command_on_success.')
+			explog('Exit code: %d' % subprocess.call(config.notification_command_on_success.format(NAME_CODE = e.name_code, HTML_REPORT_LINK = P.html_report_link), shell = True, stdout = explog.stderr, stderr = explog.stderr))
+		explog('\nALL OK. KTHXBAI!')
 	
 	explog.stdout.close()
 	explog.stderr.close()
