@@ -112,6 +112,9 @@ class Experiment:
 
 		def get_used_paths(self):
 			return [v for k, v in sorted(self.env.items()) if isinstance(v, path)] + [self.cwd] + self.executable.get_used_paths()
+
+		def has_failed(self):
+			return self.status == Experiment.ExecutionStatus.error or self.status == Experiment.ExecutionStatus.killed
 	
 	class Stage:
 		def __init__(self, name, queue):
@@ -280,7 +283,7 @@ def html(e):
 							{
 								if('/' + report.stages[i].jobs[j].name == job_name)
 								{
-									render_details(report.stages[i].jobs[j], {header : report.stages[i].jobs[j].name, stats_keys_reduced : stats_keys_reduced_job});
+									render_details(report.stages[i].jobs[j], {header : {text : report.stages[i].jobs[j].name, href : '#' + stage_name + '/' + job_name}, stats_keys_reduced : stats_keys_reduced_job});
 									return;
 								}
 							}
@@ -340,7 +343,7 @@ def html(e):
 
 				<div class="col-sm-4 experiment-pane" id="divDetails"></div>
 				<script type="text/x-jsrender" id="tmplDetails">
-					<h1>{{>~header}}&nbsp;</h1>
+					<h1>{{if ~header}}<a href="{{>~header.href}}">{{>~header.text}}</a>{{/if}}&nbsp;</h1>
 					<h3><a id="stats-toggle" data-toggle="collapse" data-target=".table-stats-extended" data-placement="right" title="toggle all">stats &amp; config</a></h3>
 					<table class="table table-striped">
 						{{for ~stats_keys_reduced ~stats=stats tmpl="#tmplStats" /}}
@@ -551,7 +554,7 @@ def run(dry, verbose, notify):
 			explog('Stopping the experiment. Skipped stages: %s' % ','.join([e.stages[si].name for si in range(stage_idx + 1, len(e.stages))]))
 			if notify and config.notification_command_on_error:
 				explog('Executing custom notification_command_on_error.')
-				explog('Exit code: %d' % subprocess.call(config.notification_command_on_error.replace('$NAME_CODE', e.name_code).replace('$HTML_REPORT_LINK', P.html_report_link).replace('$FAILED_STAGE', stage.name), shell = True, stdout = explog.stderr))
+				explog('Exit code: %d' % subprocess.call(config.notification_command_on_error.replace('$NAME_CODE', e.name_code).replace('$HTML_REPORT_LINK', P.html_report_link).replace('$FAILED_STAGE', stage.name).replace('$FAILED_JOB', [job.name for job in stage.jobs if job.has_failed()][0]), shell = True, stdout = explog.stderr))
 			break
 		else:
 			explog('[ok, elapsed %s]' % elapsed)
