@@ -81,8 +81,9 @@ class Q:
 
 class path:
 	def __init__(self, path_parts, env = {}, domakedirs = False, isoutput = False):
+		path_parts = path_parts if isinstance(path_parts, tuple) else (path_parts, )
 		assert all([part != None for part in path_parts])
-
+	
 		self.string = os.path.join(*path_parts)
 		self.domakedirs = domakedirs
 		self.isoutput = isoutput
@@ -91,7 +92,7 @@ class path:
 	def join(self, *path_parts):
 		assert all([part != None for part in path_parts])
 
-		return path(os.path.join(self.string, *map(str, args)))
+		return path(os.path.join(self.string, *map(str, path_parts)), env = self.env)
 
 	def makedirs(self):
 		return path(self.string, domakedirs = True, isoutput = self.isoutput, env = self.env)
@@ -99,10 +100,6 @@ class path:
 	def output(self):
 		return path(self.string, domakedirs = self.domakedirs, isoutput = True, env = self.env)
 
-	@staticmethod
-	def cwd():
-		return path(os.getcwd())
-	
 	def __str__(self):
 		return self.string.format(**self.env)
 
@@ -164,12 +161,12 @@ class Experiment:
 	def stage(self, name, queue = None):
 		self.stages.append(Experiment.Stage(name, queue))
 
-	def run(self, executable, name = None, env = {}, cwd = path.cwd()):
+	def run(self, executable, name = None, env = {}, cwd = path(os.getcwd())):
 		name = '_'.join(map(str, name if isinstance(name, tuple) else (name,))) if name != None else str(len(self.stages[-1].jobs))
 		self.stages[-1].jobs.append(Experiment.Job(name, executable, env, cwd))
 
 	def path(self, *path_parts):
-		return path(path_parts, env = {EXPERIMENT_NAME = self.name})
+		return path(path_parts, env = {'EXPERIMENT_NAME' : self.name})
 
 	def has_failed_stages(self):
 		return any([stage.calculate_aggregate_status() == Experiment.ExecutionStatus.error for stage in self.stages])
@@ -449,6 +446,13 @@ def gen(e = None, locally = None):
 		e = init()
 
 	print '%-30s "%s"' % ('Generating the experiment to:', P.locally_generated_script if locally else P.experiment_root)
+	
+	for stage in e.stages:
+		for job in stage.jobs:
+			for p in job.get_used_paths():
+				if p.domakedirs == True and not os.path.exists(str(p)):
+					print stage.name, job.name, p
+					print map(str, job.get_used_paths())
 	
 	for p in [p for stage in e.stages for job in stage.jobs for p in job.get_used_paths() if p.domakedirs == True and not os.path.exists(str(p))]:
 		os.makedirs(str(p))
