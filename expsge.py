@@ -80,7 +80,7 @@ class Q:
 		subprocess.check_call(['qdel'] + map(str, jobs))
 
 class path:
-	def __init__(self, *path_parts, env = {}, domakedirs = False, isoutput = False):
+	def __init__(self, path_parts, env = {}, domakedirs = False, isoutput = False):
 		assert all([part != None for part in path_parts])
 
 		self.string = os.path.join(*path_parts)
@@ -168,8 +168,8 @@ class Experiment:
 		name = '_'.join(map(str, name if isinstance(name, tuple) else (name,))) if name != None else str(len(self.stages[-1].jobs))
 		self.stages[-1].jobs.append(Experiment.Job(name, executable, env, cwd))
 
-	def path(self, file_path):
-		return path(file_path, env = {EXPERIMENT_NAME = self.name})
+	def path(self, *path_parts):
+		return path(path_parts, env = {EXPERIMENT_NAME = self.name})
 
 	def has_failed_stages(self):
 		return any([stage.calculate_aggregate_status() == Experiment.ExecutionStatus.error for stage in self.stages])
