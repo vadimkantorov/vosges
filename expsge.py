@@ -151,7 +151,8 @@ class Experiment:
 		self.stages.append(Experiment.Stage(name, queue))
 
 	def run(self, executable, name = None, env = {}, cwd = path.cwd()):
-		self.stages[-1].jobs.append(Experiment.Job(name or str(len(self.stages[-1].jobs)), executable, env, cwd))
+		name = '_'.join(map(str, name if isinstance(name, tuple) else (name,))) if name != None else str(len(self.stages[-1].jobs))
+		self.stages[-1].jobs.append(Experiment.Job(name, executable, env, cwd))
 
 	def has_failed_stages(self):
 		return any([stage.calculate_aggregate_status() == Experiment.ExecutionStatus.error for stage in self.stages])
