@@ -1,7 +1,11 @@
 #TODO: show rcfile
 #TODO: show all env
 #TODO: make %expsge -> %meta commands accept json
+#TODO: make %meta result
 #TODO: make config call
+#TODO: reorg cmd line args
+#TODO: pass environment variables -v
+#TODO: job script, stage script
 
 import os
 import re
