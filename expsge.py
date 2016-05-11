@@ -4,8 +4,10 @@
 #TODO: make %meta result
 #TODO: make config call
 #TODO: reorg cmd line args
-#TODO: pass environment variables -v
+#TODO: pass environment variables -v (to gen and run)
 #TODO: job script, stage script
+#TODO: run --locally
+#TODO: exp stop exp_py shouldn't print full path
 
 import os
 import re
