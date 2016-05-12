@@ -1,13 +1,5 @@
-#TODO: show rcfile
-#TODO: show all env
-#TODO: make %expsge -> %meta commands accept json
-#TODO: make %meta result
-#TODO: make config call
-#TODO: reorg cmd line args
-#TODO: pass environment variables -v (to gen and run)
-#TODO: job script, stage script
 #TODO: run --locally
-#TODO: exp stop exp_py shouldn't print full path
+#TODO: modal flyouts for stdout, stderr etc; panels
 
 import os
 import re
@@ -23,20 +15,25 @@ import subprocess
 import xml.dom.minidom
 
 class config:
-	maximum_simultaneously_submitted_jobs = 4
-	sleep_between_queue_checks = 2.0
-	mem_lo_gb = 10.0
-	mem_hi_gb = 64.0
-	max_stdout_characters = 2048
-	job_batch_size = 1
-	time_format = '%d/%m/%Y %H:%M:%S'
-	root = './expsge'
+	tool_name = 'woody'
+	magic = '%' + tool_name
+	
+	root = '.' + tool_name
 	html_root = None
 	html_root_alias = None
 	notification_command_on_error = None
 	notification_command_on_success = None
+	strftime = '%d/%m/%Y %H:%M:%S'
+	max_stdout_size = 2048
+	sleep_between_queue_checks = 2.0
 
-	items = staticmethod(lambda: [(k, v) for k, v in vars(config).items() if '__' not in k and k != 'items'])
+	queue = None
+	mem_lo_gb = 10.0
+	mem_hi_gb = 64.0
+	parallel_jobs = 4
+	batch_size = 1
+
+	items = staticmethod(lambda: [(k, v) for k, v in vars(config).items() if '__' not in k and k not in ['items', 'tool_name', 'magic']])
 
 class P:
 	jobdir = staticmethod(lambda stage_name: os.path.join(P.job, stage_name))
@@ -54,10 +51,11 @@ class P:
 		return open(file_path).read() if os.path.exists(file_path) else ''
 
 	@staticmethod
-	def init(exp_py):
-		P.exp_py = os.path.abspath(exp_py)
+	def init(exp_py, rcfile):
+		P.exp_py = exp_py
+		P.rcfile = os.path.abspath(rcfile)
 		P.locally_generated_script = os.path.abspath(os.path.basename(exp_py) + '.generated.sh')
-		P.experiment_name_code = os.path.basename(P.exp_py) + '_' + hashlib.md5(P.exp_py).hexdigest()[:3].upper()
+		P.experiment_name_code = os.path.basename(P.exp_py) + '_' + hashlib.md5(os.path.abspath(P.exp_py)).hexdigest()[:3].upper()
 		
 		P.root = os.path.abspath(config.root)
 		P.html_root = config.html_root or os.path.join(P.root, 'html')
@@ -74,18 +72,31 @@ class P:
 
 class Q:
 	@staticmethod
+	def retry(f):
+		def safe_f(*args, **kwargs):
+			while True:
+				try:
+					res = f(*args, **kwargs)
+					return res
+				except subprocess.CalledProcessError, err:
+					print >> sys.stderr, '\nRetrying. Got CalledProcessError while calling %s:' % f, err.output
+					time.sleep(config.sleep_between_queue_checks)
+					continue
+		return safe_f
+
+	@staticmethod
 	def get_jobs(job_name_prefix, state = ''):
-		return [int(elem.getElementsByTagName('JB_job_number')[0].firstChild.data) for elem in xml.dom.minidom.parseString(subprocess.check_output(['qstat', '-xml'])).documentElement.getElementsByTagName('job_list') if elem.getElementsByTagName('JB_name')[0].firstChild.data.startswith(job_name_prefix) and elem.getElementsByTagName('state')[0].firstChild.data.startswith(state)]
+		return [int(elem.getElementsByTagName('JB_job_number')[0].firstChild.data) for elem in xml.dom.minidom.parseString(Q.retry(subprocess.check_output)(['qstat', '-xml'])).documentElement.getElementsByTagName('job_list') if elem.getElementsByTagName('JB_name')[0].firstChild.data.startswith(job_name_prefix) and elem.getElementsByTagName('state')[0].firstChild.data.startswith(state)]
 	
 	@staticmethod
 	def submit_job(sgejob_file):
-		return int(subprocess.check_output(['qsub', '-terse', sgejob_file]))
+		return int(Q.retry(subprocess.check_output)(['qsub', '-terse', sgejob_file]))
 
 	@staticmethod
 	def delete_jobs(jobs):
 		subprocess.check_call(['qdel'] + map(str, jobs))
 
-class path:
+class Path:
 	def __init__(self, path_parts, env = {}, domakedirs = False, isoutput = False):
 		path_parts = path_parts if isinstance(path_parts, tuple) else (path_parts, )
 		assert all([part != None for part in path_parts])
@@ -98,13 +109,13 @@ class path:
 	def join(self, *path_parts):
 		assert all([part != None for part in path_parts])
 
-		return path(os.path.join(self.string, *map(str, path_parts)), env = self.env)
+		return Path(os.path.join(self.string, *map(str, path_parts)), env = self.env)
 
 	def makedirs(self):
-		return path(self.string, domakedirs = True, isoutput = self.isoutput, env = self.env)
+		return Path(self.string, domakedirs = True, isoutput = self.isoutput, env = self.env)
 
 	def output(self):
-		return path(self.string, domakedirs = self.domakedirs, isoutput = True, env = self.env)
+		return Path(self.string, domakedirs = self.domakedirs, isoutput = True, env = self.env)
 
 	def __str__(self):
 		return self.string.format(**self.env)
@@ -128,18 +139,19 @@ class Experiment:
 			self.status = Experiment.ExecutionStatus.waiting
 
 		def get_used_paths(self):
-			return [v for k, v in sorted(self.env.items()) if isinstance(v, path)] + [self.cwd] + self.executable.get_used_paths()
+			return [v for k, v in sorted(self.env.items()) if isinstance(v, Path)] + [self.cwd] + self.executable.get_used_paths()
 
 		def has_failed(self):
 			return self.status == Experiment.ExecutionStatus.error or self.status == Experiment.ExecutionStatus.killed
 	
 	class Stage:
-		def __init__(self, name, queue):
+		def __init__(self, name, queue, parallel_jobs, batch_size, mem_lo_gb, mem_hi_gb):
 			self.name = name
 			self.queue = queue
-			self.mem_lo_gb = config.mem_lo_gb
-			self.mem_hi_gb = config.mem_hi_gb
-			self.job_batch_size = config.job_batch_size
+			self.parallel_jobs = parallel_jobs
+			self.batch_size = batch_size
+			self.mem_lo_gb = mem_lo_gb
+			self.mem_hi_gb = mem_hi_gb
 			self.jobs = []
 
 		def calculate_aggregate_status(self):
@@ -154,26 +166,17 @@ class Experiment:
 			return [status[0] for status, extra_statuses in conditions.items() if any([job.status in status for job in self.jobs]) and (extra_statuses == None or all([job.status in status + extra_statuses for job in self.jobs]))][0]
 
 		def job_batch_count(self):
-			return int(math.ceil(float(len(self.jobs)) / self.job_batch_size))
+			return int(math.ceil(float(len(self.jobs)) / self.batch_size))
 
 		def calculate_job_range(self, batch_idx):
-			return range(batch_idx * self.job_batch_size, min(len(self.jobs), (batch_idx + 1) * self.job_batch_size))
+			return range(batch_idx * self.batch_size, min(len(self.jobs), (batch_idx + 1) * self.batch_size))
 
-	def __init__(self, name, name_code):
+	def __init__(self, name, name_code, env):
 		self.name = name
 		self.name_code = name_code
 		self.stages = []
-
-	def stage(self, name, queue = None):
-		self.stages.append(Experiment.Stage(name, queue))
-
-	def run(self, executable, name = None, env = {}, cwd = path(os.getcwd())):
-		name = '_'.join(map(str, name if isinstance(name, tuple) else (name,))) if name != None else str(len(self.stages[-1].jobs))
-		self.stages[-1].jobs.append(Experiment.Job(name, executable, env, cwd))
-
-	def path(self, *path_parts):
-		return path(path_parts, env = {'EXPERIMENT_NAME' : self.name})
-
+		self.env = env
+	
 	def has_failed_stages(self):
 		return any([stage.calculate_aggregate_status() == Experiment.ExecutionStatus.error for stage in self.stages])
 
@@ -182,50 +185,44 @@ class Experiment:
 			for job in stage.jobs:
 				job.status = Experiment.ExecutionStatus.canceled
 
+	def config(self, **kwargs):
+		for k, v in kwargs.items():
+			setattr(config, k, v)
+
+	def path(self, *path_parts):
+		return Path(path_parts, env = {'EXPERIMENT_NAME' : self.name})
+
+	def stage(self, name, queue = None, parallel_jobs = None, batch_size = None, mem_lo_gb = None, mem_hi_gb = None):
+		self.stages.append(Experiment.Stage(name, queue or config.queue, parallel_jobs or config.parallel_jobs, batch_size or config.batch_size, mem_lo_gb or config.mem_lo_gb, mem_hi_gb or config.mem_hi_gb))
+		return self.stages[-1]
+
+	def run(self, executable, name = None, env = {}, cwd = Path(os.getcwd()), stage = None):
+		effective_stage = self.stages[-1] if stage == None else ([s for s in self.stages if s.name == stage] or [self.stage(stage)])[0]
+		name = '_'.join(map(str, name if isinstance(name, tuple) else (name,))) if name != None else str(len(effective_stage.jobs))
+		effective_stage.jobs.append(Experiment.Job(name, executable, env, cwd))
+		return effective_stage.jobs[-1]
+
 class bash:
 	def __init__(self, script_path, args = ''):
 		self.script_path = script_path
 		self.args = args
 
 	def get_used_paths(self):
-		return [path(str(self.script_path))]
+		return [Path(str(self.script_path))]
 
 	def generate_bash_script_lines(self):
 		return [str(self.script_path) + ' ' + self.args]
-
-def init():
-	globals_mod = globals().copy()
-	e = Experiment(os.path.basename(P.exp_py), P.experiment_name_code)
-	globals_mod.update({m : getattr(e, m) for m in dir(e)})
-	exec open(P.exp_py, 'r').read() in globals_mod, globals_mod
-
-	def makedirs_if_does_not_exist(d):
-		if not os.path.exists(d):
-			os.makedirs(d)
-		
-	for d in P.all_dirs:
-		makedirs_if_does_not_exist(d)
-	
-	for stage in e.stages:
-		makedirs_if_does_not_exist(P.logdir(stage.name))
-		makedirs_if_does_not_exist(P.jobdir(stage.name))
-		makedirs_if_does_not_exist(P.sgejobdir(stage.name))
-	
-	return e
-
-def clean():
-	if os.path.exists(P.experiment_root):
-		shutil.rmtree(P.experiment_root)
 	
 def html(e):
 	HTML_PATTERN = '''
 <!DOCTYPE html>
 
-<html>
+<html lang="en">
 	<head>
 		<title>%s</title>
 		<meta charset="utf-8" />
 		<meta http-equiv="cache-control" content="no-cache" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css" integrity="sha384-1q8mTJOASx8j1Au+a5WDVnPi2lkFfwwEAa8hDDdjZlpLegxhjVME1fgjWPGmkzs7" crossorigin="anonymous">
 		<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap-theme.min.css" integrity="sha384-fLW2N01lMqjakBkx3l/M9EahuwpSfeNvV63J5ezn3uZzapT0u7EYsXMjQV+0En5r" crossorigin="anonymous">
 		<script type="text/javascript" src="https://code.jquery.com/jquery-2.2.3.min.js"></script>
@@ -233,7 +230,6 @@ def html(e):
 		<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/jsviews/0.9.75/jsrender.min.js"></script>
 		
 		<style>
-			.experiment-pane {overflow: auto}
 			.job-status-waiting {background-color: white}
 			.job-status-submitted {background-color: gray}
 			.job-status-running {background-color: lightgreen}
@@ -241,6 +237,20 @@ def html(e):
 			.job-status-error {background-color: red}
 			.job-status-killed {background-color: orange}
 			.job-status-canceled {background-color: salmon}
+
+			.experiment-pane {overflow: auto}
+			.accordion-toggle:after {
+			    /* symbol for "opening" panels */
+			    font-family: 'Glyphicons Halflings';  /* essential for enabling glyphicon */
+			    content: "\e114";    /* adjust as needed, taken from bootstrap.css */
+			    float: right;        /* adjust as needed */
+			    color: grey;         /* adjust as needed */
+			}
+
+			.accordion-toggle.collapsed:after {
+				/* symbol for "collapsed" panels */
+				content: "\e080";    /* adjust as needed, taken from bootstrap.css */
+			}
 		</style>
 	</head>
 	<body>
@@ -288,10 +298,12 @@ def html(e):
 					var stats_keys_reduced_experiment = ['name_code', 'time_updated', 'time_started', 'time_finished'];
 					var stats_keys_reduced_stage = ['time_wall_clock_avg_seconds'];
 					var stats_keys_reduced_job = ['exit_code', 'time_wall_clock_seconds'];
+					var environ_keys_reduced = ['USER', 'PWD', 'HOME'];
 
 					var render_details = function(obj, ctx) {
 						$('#divDetails').html($('#tmplDetails').render(obj, ctx));
-						$('#stats-toggle').tooltip({trigger : 'manual'}).tooltip('show');
+						$('[data-toggle="collapse"][title]:not([title=""])').tooltip({trigger : 'manual'}).tooltip('show');
+						$('pre').each(function() {$(this).scrollTop(this.scrollHeight);});
 					};
 			
 					$('#divExp').html($('#tmplExp').render(report));
@@ -304,17 +316,17 @@ def html(e):
 							{
 								if('/' + report.stages[i].jobs[j].name == job_name)
 								{
-									render_details(report.stages[i].jobs[j], {header : {text : report.stages[i].jobs[j].name, href : '#' + stage_name + '/' + job_name}, stats_keys_reduced : stats_keys_reduced_job});
+									render_details(report.stages[i].jobs[j], {header : {text : report.stages[i].jobs[j].name, href : '#' + stage_name + '/' + job_name}, stats_keys_reduced : stats_keys_reduced_job, environ_keys_reduced : environ_keys_reduced});
 									return;
 								}
 							}
 
-							render_details(report.stages[i], {stats_keys_reduced : stats_keys_reduced_stage});
+							render_details(report.stages[i], {stats_keys_reduced : stats_keys_reduced_stage, environ_keys_reduced : environ_keys_reduced});
 							return;
 						}
 					}
 					$('#divJobs').html('');
-					render_details(report, {stats_keys_reduced : stats_keys_reduced_experiment});
+					render_details(report, {stats_keys_reduced : stats_keys_reduced_experiment, environ_keys_reduced : environ_keys_reduced});
 				}).trigger('hashchange');
 			});
 
@@ -365,34 +377,51 @@ def html(e):
 				<div class="col-sm-4 experiment-pane" id="divDetails"></div>
 				<script type="text/x-jsrender" id="tmplDetails">
 					<h1>{{if ~header}}<a href="{{>~header.href}}">{{>~header.text}}</a>{{/if}}&nbsp;</h1>
-					<h3><a id="stats-toggle" data-toggle="collapse" data-target=".table-stats-extended" data-placement="right" title="toggle all">stats &amp; config</a></h3>
+					<h3><a data-toggle="collapse" data-target=".extended-stats" data-placement="right" title="toggle all">stats &amp; config</a></h3>
 					<table class="table table-striped">
 						{{for ~stats_keys_reduced ~stats=stats tmpl="#tmplStats" /}}
-						{{for ~sortedkeys(stats, ~stats_keys_reduced) ~stats=stats tmpl="#tmplStats" ~row_class="collapse table-stats-extended" /}}
+						{{for ~sortedkeys(stats, ~stats_keys_reduced) ~stats=stats tmpl="#tmplStats" ~row_class="collapse extended-stats" /}}
 					</table>
+
 					<h3>stdout</h3>
-					<pre>{{>stdout}}</pre>
+					<pre class="pre-scrollable">{{if stdout}}{{>stdout}}{{else}}empty so far{{/if}}</pre>
+
 					<h3>stderr</h3>
-					<pre>{{>stderr}}</pre>
-					{{if script}}
-					<h3>script</h3>
-					<pre>{{>script}}</pre>
-					{{/if}}
+					<pre class="pre-scrollable">{{if stderr}}{{>stderr}}{{else}}empty so far{{/if}}</pre>
+
 					{{if env}}
-					<h3>env</h3>
+					<h3>user env</a></h3>
 					<table class="table table-striped">
-						{{for ~sortedkeys(env) ~env=env}}
-						<tr>
-							<th>{{>#data}}</th>
-							<td>{{>~env[#data]}}</td>
-						</tr>
+						{{for ~sortedkeys(env) ~env=env tmpl="#tmplEnv"}}
 						{{else}}
-						<tr>
-							<td>No environment variables were passed</td>
-						</tr>
-						{{/props}}
+						<tr><td>no variables were passed</td></tr>
+						{{/for}}
 					</table>
 					{{/if}}
+
+					{{if environ}}
+					<h3><a data-toggle="collapse" data-target=".extended-environ">effective env</a></h3>
+					<table class="table table-striped">
+						{{for ~environ_keys_reduced ~env=environ tmpl="#tmplEnv" /}}
+						{{for ~sortedkeys(environ, ~environ_keys_reduced) ~env=environ tmpl="#tmplEnv" ~row_class="collapse extended-environ" /}}
+					</table>
+					{{/if}}
+
+					{{if script}}
+					<h3><a data-toggle="collapse" data-target=".extended-script">script</a></h3>
+					<pre class="pre-scrollable collapse extended-script">{{>script}}</pre>
+					{{/if}}
+					{{if rcfile}}
+					<h3><a data-toggle="collapse" data-target=".extended-rcfile">rcfile</a></h3>
+					<pre class="pre-scrollable collapse extended-rcfile">{{>rcfile}}</pre>
+					{{/if}}
+				</script>
+
+				<script type="text/x-jsrender" id="tmplEnv">
+					<tr class="{{>~row_class}}">
+						<th>{{>#data}}</th>
+						<td>{{if ~env[#data] != null}}{{>~env[#data]}}{{else}}N/A{{/if}}</td>
+					</tr>
 				</script>
 				
 				<script type="text/x-jsrender" id="tmplStats">
@@ -407,63 +436,107 @@ def html(e):
 </html>
 	'''
 
-	sgejoblog = lambda stage, k: '\n'.join(['#SGEJOB #%d (%s)\n%s\n\n' % (sgejob_idx, log_file_path, P.read_or_empty(log_file_path)) for log_file_path in [P.sgejoblogfiles(stage.name, sgejob_idx)[k] for sgejob_idx in range(stage.job_batch_count())]])
+	sgejoblog_paths = lambda stage, k: [P.sgejoblogfiles(stage.name, sgejob_idx)[k] for sgejob_idx in range(stage.job_batch_count())]
+	sgejoblog = lambda stage, k: '\n'.join(['#BATCH #%d (%s)\n%s\n\n' % (sgejob_idx, log_file_path, P.read_or_empty(log_file_path)) for sgejob_idx, log_file_path in enumerate(sgejoblog_paths(stage, k))])
+	sgejobscript = lambda stage: '\n'.join(['#BATCH #%d (%s)\n%s\n\n' % (sgejob_idx, sgejob_path, P.read_or_empty(sgejob_path)) for sgejob_path in [P.sgejobfile(stage.name, sgejob_idx) for sgejob_idx in range(stage.job_batch_count())]])
+	truncate_stdout = lambda stdout: stdout[:config.max_stdout_size / 2] + '\n\n[%d characters skipped]\n\n' % (len(stdout) - 2 * (config.max_stdout_size / 2)) + stdout[-(config.max_stdout_size / 2):] if stdout != None and len(stdout) > config.max_stdout_size else stdout
+	do_magic_and_merge = lambda stderr, action, dics: reduce(lambda x, y: dict(x.items() + y.items()), dics + [json.loads(magic_argument) for magic_action, magic_argument in re.findall('%s (.+) (.+)$' % config.magic, stderr, re.MULTILINE) if magic_action == action], {})
 
-	stdout_path, stderr_path = P.explogfiles()
-	stdout, stderr = map(P.read_or_empty, [stdout_path, stderr_path])
-	time_started = re.search('%expsge exp_started = (.+)$', stderr, re.MULTILINE)
-	time_finished = re.search('%expsge exp_finished = (.+)$', stderr, re.MULTILINE)
+	exp_job_logs = {obj : map(P.read_or_empty, log_paths) for obj, log_paths in [(e, P.explogfiles())] + [(job, P.joblogfiles(stage.name, job_idx)) for stage in e.stages for job_idx, job in enumerate(stage.jobs)]}
 
-	j = {'name' : e.name, 'stages' : [], 'stats' : {'time_started' : time_started.group(1) if time_started else None, 'time_finished' : time_finished.group(1) if time_finished else None, 'time_updated' : time.strftime(config.time_format), 'stdout_path' : stdout_path, 'stderr_path' : stderr_path, 'experiment_root' : P.experiment_root, 'name_code' : e.name_code, 'html_root' : P.html_root, 'argv_joined' : ' '.join(['"%s"' % arg if ' ' in arg else arg for arg in sys.argv])}, 'stdout' : stdout, 'stderr' : stderr, 'script' : P.read_or_empty(P.exp_py)}
-	j['stats'].update({'config.' + k : v for k, v in config.items()})
-	for stage in e.stages:
-		jobs = []
-		for job_idx, job in enumerate(stage.jobs):
-			stdout_path, stderr_path = P.joblogfiles(stage.name, job_idx)
-			stdout, stderr = map(P.read_or_empty, [stdout_path, stderr_path])
-			if stdout != None and len(stdout) > config.max_stdout_characters:
-				half = config.max_stdout_characters / 2
-				stdout = stdout[:half] + '\n\n[%d characters skipped]\n\n' % (len(stdout) - 2 * half) + stdout[-half:]
-			
-			stats = {'stdout_path' : stdout_path, 'stderr_path' : stderr_path}
-			usrbintime_output = re.search('%expsge usrbintime_output = (.+)$', stderr, re.MULTILINE)
-			time_started = re.search('%expsge job_started = (.+)$', stderr, re.MULTILINE)
-			time_finished = re.search('%expsge job_finished = (.+)$', stderr, re.MULTILINE)
-			hostname = re.search('%expsge hostname = (.+)$', stderr, re.MULTILINE)
-			if usrbintime_output:
-				stats.update(json.loads(usrbintime_output.group(1)))
-			if time_started:
-				stats['time_started'] = time_started.group(1)
-			if time_finished:
-				stats['time_finished'] = time_finished.group(1)
-			if hostname:
-				stats['hostname'] = hostname.group(1)
+	def put_extra_stage_stats(report_stage):
+		wall_clock_seconds = filter(lambda x: x != None, [report_job['stats'].get('time_wall_clock_seconds') for report_job in report_stage['jobs']])
+		report_stage['stats']['time_wall_clock_avg_seconds'] = float(sum(wall_clock_seconds)) / len(wall_clock_seconds) if wall_clock_seconds else None
+		return report_stage
 
-			jobs.append({'name' : job.name, 'stdout' : stdout, 'stderr' : stderr, 'status' : job.status, 'stats' : stats, 'env' : {k : str(v) for k, v in job.env.items()}})
-		stdout, stderr = sgejoblog(stage, 0), sgejoblog(stage, 1)
-		time_wall_clock_avg_seconds = filter(lambda x: x != None, [j_job['stats'].get('time_wall_clock_seconds') for j_job in jobs])
-		j['stages'].append({'name' : stage.name, 'jobs' : jobs, 'status' : stage.calculate_aggregate_status(), 'stdout' : stdout, 'stderr' : stderr, 'stats' : {'mem_lo_gb' : stage.mem_lo_gb, 'mem_hi_gb' : stage.mem_hi_gb, 'time_wall_clock_avg_seconds' : sum(time_wall_clock_avg_seconds) / len(time_wall_clock_avg_seconds) if time_wall_clock_avg_seconds else None}})
-			
+	report = {
+		'name' : e.name, 
+		'stdout' : exp_job_logs[e][0], 
+		'stderr' : exp_job_logs[e][1], 
+		'script' : P.read_or_empty(P.exp_py), 
+		'rcfile' : P.read_or_empty(P.rcfile) if P.rcfile != None else None,
+		'environ' : dict(os.environ),
+		'env' : e.env,
+		'stats' : do_magic_and_merge(exp_job_logs[e][1], 'stats', [{
+			'time_updated' : time.strftime(config.strftime), 
+			'experiment_root' : P.experiment_root,
+			'exp_py' : os.path.abspath(P.exp_py),
+			'rcfile' : P.rcfile,
+			'name_code' : e.name_code, 
+			'html_root' : P.html_root, 
+			'argv_joined' : ' '.join(['"%s"' % arg if ' ' in arg else arg for arg in sys.argv])}, 
+			dict(zip(['stdout_path', 'stderr_path'], P.explogfiles())),
+			{'config.' + k : v for k, v in config.items()},
+		]),
+		'stages' : [put_extra_stage_stats({
+			'name' : stage.name, 
+			'stdout' : sgejoblog(stage, 0), 
+			'stderr' : sgejoblog(stage, 1), 
+			'script' : sgejobscript(stage),
+			'status' : stage.calculate_aggregate_status(), 
+			'stats' : {
+				'stdout_path' : '\n'.join(sgejoblog_paths(stage, 0)),
+				'stderr_path' : '\n'.join(sgejoblog_paths(stage, 1)),
+				'mem_lo_gb' : stage.mem_lo_gb, 
+				'mem_hi_gb' : stage.mem_hi_gb,
+			},
+			'jobs' : [{
+				'name' : job.name, 
+				'stdout' : truncate_stdout(exp_job_logs[job][0]),
+				'stderr' : exp_job_logs[job][1], 
+				'script' : P.read_or_empty(P.jobfile(stage.name, job_idx)),
+				'status' : job.status, 
+				'environ' : do_magic_and_merge(exp_job_logs[job][1], 'environ', []),
+				'env' : {k : str(v) for k, v in job.env.items()},
+				'stats' : do_magic_and_merge(exp_job_logs[job][1], 'stats', [
+					dict(zip(['stdout_path', 'stderr_path'], P.joblogfiles(stage.name, job_idx)))
+				]),
+			} for job_idx, job in enumerate(stage.jobs)] 
+		}) for stage in e.stages]
+	}
+
 	with open(P.html_report, 'w') as f:
-		f.write(HTML_PATTERN % (e.name_code, json.dumps(j)))
+		f.write(HTML_PATTERN % (e.name_code, json.dumps(report)))
 
-def gen(e = None, locally = None):
-	if e == None:
-		e = init()
+def clean():
+	if os.path.exists(P.experiment_root):
+		shutil.rmtree(P.experiment_root)
+
+def stop():
+	Q.delete_jobs(Q.get_jobs(P.experiment_name_code))
+
+def init(extra_env):
+	extra_env = dict([k_eq_v.split('=') for k_eq_v in extra_env])
+	for k, v in extra_env.items():
+		os.environ[k] = v
+
+	globals_mod = globals().copy()
+	e = Experiment(os.path.basename(P.exp_py), P.experiment_name_code, extra_env)
+	globals_mod.update({m : getattr(e, m) for m in dir(e)})
+	exec open(P.exp_py, 'r').read() in globals_mod, globals_mod
+
+	def makedirs_if_does_not_exist(d):
+		if not os.path.exists(d):
+			os.makedirs(d)
+		
+	for d in P.all_dirs:
+		makedirs_if_does_not_exist(d)
+	
+	for stage in e.stages:
+		makedirs_if_does_not_exist(P.logdir(stage.name))
+		makedirs_if_does_not_exist(P.jobdir(stage.name))
+		makedirs_if_does_not_exist(P.sgejobdir(stage.name))
+	
+	return e
+
+def gen(locally, extra_env):
+	e = init(extra_env)
 
 	print '%-30s "%s"' % ('Generating the experiment to:', P.locally_generated_script if locally else P.experiment_root)
-	
-	for stage in e.stages:
-		for job in stage.jobs:
-			for p in job.get_used_paths():
-				if p.domakedirs == True and not os.path.exists(str(p)):
-					print stage.name, job.name, p
-					print map(str, job.get_used_paths())
-	
 	for p in [p for stage in e.stages for job in stage.jobs for p in job.get_used_paths() if p.domakedirs == True and not os.path.exists(str(p))]:
 		os.makedirs(str(p))
 	
-	generate_job_bash_script_lines = lambda stage, job, job_idx: ['# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, job.name, job_idx )] + map(lambda path: '''if [ ! -e "%s" ]; then echo 'File "%s" does not exist'; exit 1; fi''' % (path, path), job.get_used_paths()) + list(itertools.starmap('export {0}="{1}"'.format, sorted(job.env.items()))) + ['cd "%s"' % job.cwd] + job.executable.generate_bash_script_lines()
+	generate_job_bash_script_lines = lambda stage, job, job_idx: ['# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, job.name, job_idx )] + map(lambda file_path: '''if [ ! -e "%s" ]; then echo 'File "%s" does not exist'; exit 1; fi''' % (file_path, file_path), job.get_used_paths()) + list(itertools.starmap('export {0}="{1}"'.format, sorted(job.env.items()))) + ['cd "%s"' % job.cwd] + job.executable.generate_bash_script_lines()
 	
 	if locally:
 		with open(P.locally_generated_script, 'w') as f:
@@ -496,18 +569,19 @@ def gen(e = None, locally = None):
 					job_stderr_path = P.joblogfiles(stage.name, job_idx)[1]
 					f.write('\n'.join([
 						'# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, stage.jobs[job_idx].name, job_idx),
-						'echo "%%expsge job_started = $(date +"%s")" > "%s"' % (config.time_format, job_stderr_path),
-						'echo "%%expsge hostname = $(hostname)" >> "%s"' % job_stderr_path,
-						'''/usr/bin/time -f '%%%%expsge usrbintime_output = {"exit_code" : %%x, "time_user_seconds" : %%U, "time_system_seconds" : %%S, "time_wall_clock_seconds" : %%e, "rss_max_kbytes" : %%M, "rss_avg_kbytes" : %%t, "page_faults_major" : %%F, "page_faults_minor" : %%R, "io_inputs" : %%I, "io_outputs" : %%O, "context_switches_voluntary" : %%w, "context_switches_involuntary" : %%c, "cpu_percentage" : "%%P", "signals_received" : %%k}' bash -e "%s" > "%s" 2>> "%s"''' % ((P.jobfile(stage.name, job_idx), ) + P.joblogfiles(stage.name, job_idx)),
-						'echo "%%expsge job_finished = $(date +"%s")" >> "%s"' % (config.time_format, job_stderr_path),
+						'''echo "%s stats {'time_started' : '$(date +"%s")'}" > "%s"''' % (config.magic, config.strftime, job_stderr_path),
+						'''echo "%s stats {'hostname' : '$(hostname)'}" >> "%s"''' % (config.magic, job_stderr_path),
+						'''python -c "import json, os; print('%s environ ' + json.dumps(dict(os.environ)))" >> "%s"''' % (config.magic, job_stderr_path),
+						'''/usr/bin/time -f "%s stats {'exit_code' : %%x, 'time_user_seconds' : %%U, 'time_system_seconds' : %%S, 'time_wall_clock_seconds' : %%e, 'rss_max_kbytes' : %%M, 'rss_avg_kbytes' : %%t, 'page_faults_major' : %%F, 'page_faults_minor' : %%R, 'io_inputs' : %%I, 'io_outputs' : %%O, 'context_switches_voluntary' : %%w, 'context_switches_involuntary' : %%c, 'cpu_percentage' : '%%P', 'signals_received' : %%k}" bash -e "%s" > "%s" 2>> "%s"''' % ((config.magic.replace('%', '%%'), P.jobfile(stage.name, job_idx)) + P.joblogfiles(stage.name, job_idx)),
+						'''echo "%s stats {'time_finished' : '$(date +"%s")'}" >> "%s"''' % (config.magic, config.strftime, job_stderr_path),
 						'# end',
 						''
 					]))
+	return e
 
-def run(dry, verbose, notify):
+def run(locally, extra_env, dry, verbose, notify):
 	clean()
-	e = init()
-	gen(e)
+	e = gen(locally, extra_env)
 
 	print '%-30s "%s"' % ('Report is at:', P.html_report_link)
 	print ''
@@ -536,12 +610,12 @@ def run(dry, verbose, notify):
 		
 		for job_idx, job in enumerate(stage.jobs):
 			stderr = P.read_or_empty(P.joblogfiles(stage.name, job_idx)[1])
-			if '%expsge job_started' in stderr:
+			if '''%s stats {'time_started' :''' % config.magic in stderr:
 				job.status = Experiment.ExecutionStatus.running
-			if 'Command exited with non-zero status' in stderr:
-				job.status = Experiment.ExecutionStatus.error
-			if '"exit_code" : 0' in stderr:
+			if '''%s stats {'exit_code' : 0''' % config.magic in stderr:
 				job.status = Experiment.ExecutionStatus.success
+			if '''Command exited with non-zero status''' in stderr:
+				job.status = Experiment.ExecutionStatus.error
 			if job.status == Experiment.ExecutionStatus.running and job not in active_jobs:
 				job.status = Experiment.ExecutionStatus.killed
 
@@ -559,13 +633,13 @@ def run(dry, verbose, notify):
 		update_status(stage)
 		html(e)
 	
-	explog('%%expsge exp_started = %s\n' % time.strftime(config.time_format), False)
+	explog('''%s stats {'time_started' : '%s'}\n''' % (config.magic, time.strftime(config.strftime)), False)
 
 	for stage_idx, stage in enumerate(e.stages):
 		time_started = time.time()
 		explog('%-30s ' % ('%s (%d jobs)' % (stage.name, len(stage.jobs))), new_line = '')
 		for sgejob_idx in range(stage.job_batch_count()):
-			wait_if_more_jobs_than(stage, config.maximum_simultaneously_submitted_jobs)
+			wait_if_more_jobs_than(stage, stage.parallel_jobs)
 			sgejob = Q.submit_job(P.sgejobfile(stage.name, sgejob_idx))
 			sgejob2job[sgejob] = [stage.jobs[job_idx] for job_idx in stage.calculate_job_range(sgejob_idx)]
 			for job_idx in stage.calculate_job_range(sgejob_idx):
@@ -586,7 +660,7 @@ def run(dry, verbose, notify):
 		else:
 			explog('[ok, elapsed %s]' % elapsed)
 	
-	explog('%%expsge exp_finished = %s' % time.strftime(config.time_format), False)
+	explog('''%s stats {'time_finished' : '%s'}''' % (config.magic, time.strftime(config.strftime)), False)
 
 	if not e.has_failed_stages():
 		if notify and config.notification_command_on_success:
@@ -598,29 +672,40 @@ def run(dry, verbose, notify):
 	explog.stderr.close()
 	html(e)
 
-def stop():
-	Q.delete_jobs(Q.get_jobs(init().name_code))
-
 if __name__ == '__main__':
-	parser = argparse.ArgumentParser()
-	parser.add_argument('--rcfile', default = os.path.expanduser('~/.expsgerc'))
-	for k, v in config.items():
-		parser.add_argument('--' + k, type = type(v) if v != None else str)
+	def add_config_fields(parser, config_fields):
+		for k in config_fields:
+			if isinstance(k, tuple):
+				arg_names = ('--' + k[0], '-' + k[1])
+				k = k[0]
+			else:
+				arg_names = ('--' + k, )
+			parser.add_argument(*arg_names, type = type(getattr(config, k) or ''))
+
+	common_parent = argparse.ArgumentParser(add_help = False)
+	common_parent.add_argument('exp_py')
+
+	gen_parent = argparse.ArgumentParser(add_help = False)
+	add_config_fields(gen_parent, ['queue', 'mem_lo_gb', 'mem_hi_gb', ('parallel_jobs', 'p'), 'batch_size'])
+	
+	run_parent = argparse.ArgumentParser(add_help = False)
+	add_config_fields(run_parent, ['notification_command_on_error', 'notification_command_on_success', 'strftime', 'max_stdout_size', 'sleep_between_queue_checks'])
+	
+	gen_run_parent = argparse.ArgumentParser(add_help = False)
+	gen_run_parent.add_argument('--locally', action = 'store_true')
+	gen_run_parent.add_argument('-v', dest = 'extra_env', action = 'append', default = [])
+
+	parser = argparse.ArgumentParser(parents = [run_parent, gen_parent])
+	parser.add_argument('--rcfile', default = os.path.expanduser('~/.%src' % config.tool_name))
+	add_config_fields(parser, ['root', 'html_root', 'html_root_alias'])
 
 	subparsers = parser.add_subparsers()
-
-	cmd = subparsers.add_parser('gen')
-	cmd.set_defaults(func = gen)
-	cmd.add_argument('exp_py')
-	cmd.add_argument('--locally', action = 'store_true')
+	subparsers.add_parser('stop', parents = [common_parent]).set_defaults(func = stop)
+	subparsers.add_parser('clean', parents = [common_parent]).set_defaults(func = clean)
+	subparsers.add_parser('gen', parents = [common_parent, gen_parent, gen_run_parent]).set_defaults(func = gen)
 	
-	cmd = subparsers.add_parser('stop')
-	cmd.set_defaults(func = stop)
-	cmd.add_argument('exp_py')
-	
-	cmd = subparsers.add_parser('run')
+	cmd = subparsers.add_parser('run', parents = [common_parent, gen_parent, run_parent, gen_run_parent])
 	cmd.set_defaults(func = run)
-	cmd.add_argument('exp_py')
 	cmd.add_argument('--dry', action = 'store_true')
 	cmd.add_argument('--verbose', action = 'store_true')
 	cmd.add_argument('--notify', action = 'store_true')
@@ -636,10 +721,10 @@ if __name__ == '__main__':
 		if arg != None:
 			setattr(config, k, arg)
 
-	P.init(args.pop('exp_py'))
+	P.init(args.pop('exp_py'), rcfile)
 	try:
 		cmd(**args)
 	except KeyboardInterrupt:
 		print 'Quitting (Ctrl+C pressed). To stop jobs:'
 		print ''
-		print 'expsge stop "%s"' % P.exp_py
+		print '%s stop "%s"' % (config.tool_name, P.exp_py)
