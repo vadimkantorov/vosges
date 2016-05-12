@@ -3,6 +3,7 @@
 #TODO: html command
 #TODO: explog to include Q's log
 #TODO: magic results
+#TODO: special API for modifying PATH and LD_LIBRARY_PATH
 
 import os
 import re
@@ -301,7 +302,7 @@ def html(e):
 					var stats_keys_reduced_experiment = ['name_code', 'time_updated', 'time_started', 'time_finished'];
 					var stats_keys_reduced_stage = ['time_wall_clock_avg_seconds'];
 					var stats_keys_reduced_job = ['exit_code', 'time_wall_clock_seconds'];
-					var environ_keys_reduced = ['USER', 'PWD', 'HOME'];
+					var environ_keys_reduced = ['USER', 'PWD', 'HOME', 'PATH', 'LD_LIBRARY_PATH'];
 
 					var render_details = function(obj, ctx) {
 						$('#divDetails').html($('#tmplDetails').render(obj, ctx));
