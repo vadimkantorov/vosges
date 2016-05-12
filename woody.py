@@ -1,5 +1,8 @@
 #TODO: run --locally
 #TODO: modal flyouts for stdout, stderr etc; panels
+#TODO: html command
+#TODO: explog to include Q's log
+#TODO: magic results
 
 import os
 import re
