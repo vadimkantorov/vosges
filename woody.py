@@ -1,5 +1,3 @@
-#TODO: special API for modifying PATH and LD_LIBRARY_PATH, source
-
 import os
 import re
 import sys
@@ -23,6 +21,9 @@ class config:
 	strftime = '%d/%m/%Y %H:%M:%S'
 	max_stdout_size = 2048
 	sleep_between_queue_checks = 2.0
+	path = []
+	ld_library_path = []
+	source = None
 
 	queue = None
 	mem_lo_gb = 10.0
@@ -145,13 +146,16 @@ class Experiment:
 			return self.status == Experiment.ExecutionStatus.error or self.status == Experiment.ExecutionStatus.killed
 	
 	class Stage:
-		def __init__(self, name, queue, parallel_jobs, batch_size, mem_lo_gb, mem_hi_gb):
+		def __init__(self, name, queue, parallel_jobs, batch_size, mem_lo_gb, mem_hi_gb, source, path, ld_library_path):
 			self.name = name
 			self.queue = queue
 			self.parallel_jobs = parallel_jobs
 			self.batch_size = batch_size
 			self.mem_lo_gb = mem_lo_gb
 			self.mem_hi_gb = mem_hi_gb
+			self.source = source
+			self.path = path
+			self.ld_library_path = ld_library_path
 			self.jobs = []
 
 		def calculate_aggregate_status(self):
@@ -188,8 +192,8 @@ class Experiment:
 	def path(self, *path_parts):
 		return Path(path_parts, env = {'EXPERIMENT_NAME' : self.name})
 
-	def stage(self, name, queue = None, parallel_jobs = None, batch_size = None, mem_lo_gb = None, mem_hi_gb = None):
-		self.stages.append(Experiment.Stage(name, queue or config.queue, parallel_jobs or config.parallel_jobs, batch_size or config.batch_size, mem_lo_gb or config.mem_lo_gb, mem_hi_gb or config.mem_hi_gb))
+	def stage(self, name, queue = None, parallel_jobs = None, batch_size = None, mem_lo_gb = None, mem_hi_gb = None, source = None, path = [], ld_library_path = []):
+		self.stages.append(Experiment.Stage(name, queue or config.queue, parallel_jobs or config.parallel_jobs, batch_size or config.batch_size, mem_lo_gb or config.mem_lo_gb, mem_hi_gb or config.mem_hi_gb, source or config.source, config.path + path, config.ld_library_path + ld_library_path))
 		return self.stages[-1]
 
 	def run(self, executable, name = None, env = {}, cwd = Path(os.getcwd()), stage = None):
@@ -266,6 +270,10 @@ def html(e = None):
 
 			.experiment-pane {overflow: auto}
 			a {cursor: pointer;}
+
+			.modal-dialog, .modal-content {height: 90%%; width: 50%%}
+			.modal-body { height:calc(100%% - 100px); }
+			.full-screen {height:100%%; width: 100%%}
 		</style>
 	</head>
 	<body>
@@ -345,7 +353,6 @@ def html(e = None):
 			});
 
 		</script>
-		
 		<div class="container">
 			<div class="row">
 				<div class="col-sm-4 experiment-pane" id="divExp"></div>
@@ -400,19 +407,15 @@ def html(e = None):
 					{{if results}}
 					<h3>results</h3>
 					{{for results}}
-						{{if type == 'text'}}
-							{{include tmpl="#tmplPre" ~header_tag="h4" ~path=path ~name=name ~value=value ~id="result-" + #parent.index  /}}
-						{{else type == 'iframe'}}
-							{{include tmpl="#tmplIframe" ~header_tag="h4" ~path=path ~name=name ~value=path ~id="result-" + #parent.index /}}
-						{{/if}}
+						{{include tmpl="#tmplModal" ~type=type ~header_tag="h4" ~path=path ~name=name ~value=value id="result-" + #index  /}}
 					{{else}}
 						<pre>no results provided</pre>
 					{{/for}}
 					{{/if}}
 
-					{{include tmpl="#tmplPre" ~header_tag="h3" ~path=stdout_path ~name="stdout" ~value=stdout ~id="stdout" /}}
+					{{include tmpl="#tmplModal" ~type="text" ~header_tag="h3" ~path=stdout_path ~name="stdout" ~value=stdout ~id="stdout" /}}
 					
-					{{include tmpl="#tmplPre" ~header_tag="h3" ~path=stderr_path  ~name="stderr" ~value=stderr ~id="stderr" /}}
+					{{include tmpl="#tmplModal" ~type="text" ~header_tag="h3" ~path=stderr_path  ~name="stderr" ~value=stderr ~id="stderr" /}}
 
 					{{if env}}
 					<h3>user env</h3>
@@ -435,48 +438,36 @@ def html(e = None):
 					{{/if}}
 
 					{{if script}}
-					<h3><a data-toggle="collapse" data-target=".extended-script">script</a></h3>
-					<pre class="pre-scrollable collapse extended-script">{{>script}}</pre>
+					{{include tmpl="#tmplModal" ~type="text" ~header_tag="h3" ~path=script_path ~name="script" ~value=script ~id="sciprt" ~preview_class="hidden" /}}
 					{{/if}}
 					{{if rcfile}}
-					<h3><a data-toggle="collapse" data-target=".extended-rcfile">rcfile</a></h3>
-					<pre class="pre-scrollable collapse extended-rcfile">{{>rcfile}}</pre>
+					{{include tmpl="#tmplModal" ~type="text" ~header_tag="h3" ~path=rcfile_path ~name="rcfile" ~value=rcfile ~id="sciprt" ~preview_class="hidden" /}}
 					{{/if}}
 				</script>
 				
-				<script type="text/x-jsrender" id="tmplPre">
+				<script type="text/x-jsrender" id="tmplModal">
 					<{{:~header_tag}}><a data-toggle="modal" data-target="#full-screen-{{:~id}}">{{>~name}}</a></{{:~header_tag}}>
-					<pre class="pre-scrollable">{{if ~value}}{{>~value}}{{else}}empty so far{{/if}}</pre>
+					{{if ~type == 'text'}}
+					<pre class="pre-scrollable {{:~preview_class}}">{{if ~value}}{{>~value}}{{else}}empty so far{{/if}}</pre>
+					{{else ~type == 'iframe'}}
+					<div class="embed-responsive embed-responsive-16by9 {{:~preview_class}}">
+						<iframe src="{{:~path}}"></iframe>
+					</div>
+					{{/if}}
 
-					<div id="full-screen-{{:~id}}" class="modal" tabindex="-1" style="height:100%%">
-						<div class="modal-dialog modal-content" style="height:90%%">
+					<div id="full-screen-{{:~id}}" class="modal" tabindex="-1">
+						<div class="modal-dialog modal-content">
 							<div class="modal-header">
 								<button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
 								<h4 class="modal-title">{{>~name}}</h4>
 							</div>
-							<div class="modal-body" style="height:100%%">
+							<div class="modal-body">
 								<p>path:&nbsp;{{if ~path}}<a href="{{:~path}}">{{>~path}}</a>{{else}}no path provided{{/if}}</p>
-								<pre style="height: 90%%">{{>~value}}</pre>
-							</div>
-						</div>
-					</div>
-				</script>
-
-				<script type="text/x-jsrender" id="tmplIframe">
-					<{{:~header_tag}}><a data-toggle="modal" data-target="#full-screen-{{:~id}}">{{>~name}}</a></{{:~header_tag}}>
-					<div class="embed-responsive embed-responsive-16by9">
-						<iframe src="{{:~value}}"></iframe>
-					</div>
-
-					<div id="full-screen-{{:~id}}" class="modal" tabindex="-1" style="height:100%%">
-						<div class="modal-dialog modal-content" style="height:90%%; width: 50%%">
-							<div class="modal-header">
-								<button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
-								<h4 class="modal-title">{{>~name}}</h4>
-							</div>
-							<div class="modal-body" style="height:100%%">
-								<p>path:&nbsp;{{if ~path}}<a href="{{:~path}}">{{>~path}}</a>{{else}}no path provided{{/if}}</p>
-								<iframe style="height: 90%%; width: 100%%" src="{{:~value}}"></iframe>
+								{{if ~type == 'text'}}
+								<pre class="full-screen">{{>~value}}</pre>
+								{{else ~type == 'iframe'}}
+								<iframe class="full-screen" src="{{:~path}}"></iframe>
+								{{/if}}
 							</div>
 						</div>
 					</div>
@@ -532,13 +523,15 @@ def html(e = None):
 	report = {
 		'name' : e.name, 
 		'stdout' : exp_job_logs[e][0], 
+		'stdout_path' : P.explogfiles()[0],
 		'stderr' : exp_job_logs[e][1].stderr, 
+		'stderr_path' : P.explogfiles()[1],
 		'script' : P.read_or_empty(P.exp_py), 
+		'script_path' : os.path.abspath(P.exp_py),
 		'rcfile' : P.read_or_empty(P.rcfile) if P.rcfile != None else None,
+		'rcfile_path' : P.rcfile,
 		'environ' : exp_job_logs[e][1].environ(),
 		'env' : e.env,
-		'stdout_path' : P.explogfiles()[0],
-		'stderr_path' : P.explogfiles()[1],
 		'stats' : merge_dicts([{
 			'time_updated' : time.strftime(config.strftime), 
 			'experiment_root' : P.experiment_root,
@@ -553,11 +546,11 @@ def html(e = None):
 		'stages' : [put_extra_stage_stats({
 			'name' : stage.name, 
 			'stdout' : sgejoblog(stage, 0), 
+			'stdout_path' : '\n'.join(sgejoblog_paths(stage, 0)),
 			'stderr' : sgejoblog(stage, 1), 
+			'stderr_path' : '\n'.join(sgejoblog_paths(stage, 1)),
 			'script' : sgejobscript(stage),
 			'status' : stage.calculate_aggregate_status(), 
-			'stdout_path' : '\n'.join(sgejoblog_paths(stage, 0)),
-			'stderr_path' : '\n'.join(sgejoblog_paths(stage, 1)),
 			'stats' : {
 				'mem_lo_gb' : stage.mem_lo_gb, 
 				'mem_hi_gb' : stage.mem_hi_gb,
@@ -565,14 +558,15 @@ def html(e = None):
 			'jobs' : [{
 				'name' : job.name, 
 				'stdout' : truncate_stdout(exp_job_logs[job][0]),
+				'stdout_path' : P.joblogfiles(stage.name, job_idx)[0],
 				'stderr' : exp_job_logs[job][1].stderr, 
+				'stderr_path' : P.joblogfiles(stage.name, job_idx)[1],
 				'script' : P.read_or_empty(P.jobfile(stage.name, job_idx)),
+				'script_path' : P.jobfile(stage.name, job_idx),
 				'status' : job.status, 
 				'environ' : exp_job_logs[job][1].environ(),
 				'env' : {k : str(v) for k, v in job.env.items()},
 				'results' : augment_results(exp_job_logs[job][1].results()),
-				'stdout_path' : P.joblogfiles(stage.name, job_idx)[0],
-				'stderr_path' : P.joblogfiles(stage.name, job_idx)[1],
 				'stats' : exp_job_logs[job][1].stats()
 			} for job_idx, job in enumerate(stage.jobs)] 
 		}) for stage in e.stages]
@@ -633,7 +627,7 @@ def gen(extra_env, force, locally):
 	for p in [p for stage in e.stages for job in stage.jobs for p in job.get_used_paths() if p.domakedirs == True and not os.path.exists(str(p))]:
 		os.makedirs(str(p))
 	
-	generate_job_bash_script_lines = lambda stage, job, job_idx: ['# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, job.name, job_idx )] + map(lambda file_path: '''if [ ! -e "%s" ]; then echo 'File "%s" does not exist'; exit 1; fi''' % (file_path, file_path), job.get_used_paths()) + list(itertools.starmap('export {0}="{1}"'.format, sorted(job.env.items()))) + ['cd "%s"' % job.cwd] + job.executable.generate_bash_script_lines()
+	generate_job_bash_script_lines = lambda stage, job, job_idx: ['# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, job.name, job_idx )] + map(lambda file_path: '''if [ ! -e "%s" ]; then echo 'File "%s" does not exist'; exit 1; fi''' % (file_path, file_path), job.get_used_paths()) + list(itertools.starmap('export {0}="{1}"'.format, sorted(job.env.items()))) + ['source "%s"' % stage.source if stage.source else '', 'export PATH="%s:$PATH"' % ':'.join(reversed(stage.path)) if stage.path else '', 'export LD_LIBRARY_PATH="%s:$LD_LIBRARY_PATH"' % ':'.join(reversed(stage.ld_library_path)) if stage.ld_library_path else '', 'cd "%s"' % job.cwd] + job.executable.generate_bash_script_lines()
 	
 	if locally:
 		with open(P.locally_generated_script, 'w') as f:
@@ -806,7 +800,9 @@ if __name__ == '__main__':
 	common_parent.add_argument('exp_py')
 
 	gen_parent = argparse.ArgumentParser(add_help = False)
-	add_config_fields(gen_parent, ['queue', 'mem_lo_gb', 'mem_hi_gb', ('parallel_jobs', 'p'), 'batch_size'])
+	add_config_fields(gen_parent, ['queue', 'mem_lo_gb', 'mem_hi_gb', ('parallel_jobs', 'p'), 'batch_size', 'source'])
+	gen_parent.add_argument('--path', action = 'append', default = [])
+	gen_parent.add_argument('--ld_library_path', action = 'append', default = [])
 	
 	run_parent = argparse.ArgumentParser(add_help = False)
 	add_config_fields(run_parent, ['notification_command_on_error', 'notification_command_on_success', 'strftime', 'max_stdout_size', 'sleep_between_queue_checks'])
@@ -843,7 +839,10 @@ if __name__ == '__main__':
 	for k, v in config.items():
 		arg = args.pop(k)
 		if arg != None:
-			setattr(config, k, arg)
+			if isinstance(arg, list):
+				setattr(config, k, getattr(config, k) + arg)
+			else:
+				setattr(config, k, arg)
 
 	P.init(args.pop('exp_py'), rcfile)
 	try:
