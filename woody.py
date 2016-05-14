@@ -524,6 +524,8 @@ def html(e = None):
 
 	def augment_results(results):
 		for r in results:
+			if not isinstance(r, dict):
+				r = {'type' : 'text', 'path' : r}
 			if r.get('name') == None and r.get('path') != None:
 				r['name'] = os.path.basename(r['path'])
 			if r['type'] == 'text' and r.get('value') == None and r.get('path') != None:
