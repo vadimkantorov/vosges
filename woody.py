@@ -325,7 +325,7 @@ def html(e = None):
 
 					var render_details = function(obj, ctx) {
 						$('#divDetails').html($('#tmplDetails').render(obj, ctx));
-						$('pre .log-output').each(function() {$(this).scrollTop(this.scrollHeight);});
+						$('pre.log-output').each(function() {$(this).scrollTop(this.scrollHeight);});
 					};
 			
 					$('#divExp').html($('#tmplExp').render(report));
