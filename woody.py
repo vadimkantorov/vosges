@@ -405,17 +405,17 @@ def html(e = None):
 					</table>
 
 					{{if results}}
-					<h3>results</h3>
 					{{for results}}
-						{{include tmpl="#tmplModal" ~type=type ~header_tag="h4" ~path=path ~name=name ~value=value id="result-" + #index  /}}
+						{{include tmpl="#tmplModal" ~type=type ~path=path ~name="results: " + name ~value=value id="results-" + #index  /}}
 					{{else}}
+						<h3>results</h3>
 						<pre>no results provided</pre>
 					{{/for}}
 					{{/if}}
 
-					{{include tmpl="#tmplModal" ~type="text" ~header_tag="h3" ~path=stdout_path ~name="stdout" ~value=stdout ~id="stdout" /}}
+					{{include tmpl="#tmplModal" ~type="text" ~path=stdout_path ~name="stdout" ~value=stdout ~id="stdout" /}}
 					
-					{{include tmpl="#tmplModal" ~type="text" ~header_tag="h3" ~path=stderr_path  ~name="stderr" ~value=stderr ~id="stderr" /}}
+					{{include tmpl="#tmplModal" ~type="text" ~path=stderr_path  ~name="stderr" ~value=stderr ~id="stderr" /}}
 
 					{{if env}}
 					<h3>user env</h3>
@@ -438,15 +438,15 @@ def html(e = None):
 					{{/if}}
 
 					{{if script}}
-					{{include tmpl="#tmplModal" ~type="text" ~header_tag="h3" ~path=script_path ~name="script" ~value=script ~id="sciprt" ~preview_class="hidden" /}}
+					{{include tmpl="#tmplModal" ~type="text" ~path=script_path ~name="script" ~value=script ~id="sciprt" ~preview_class="hidden" /}}
 					{{/if}}
 					{{if rcfile}}
-					{{include tmpl="#tmplModal" ~type="text" ~header_tag="h3" ~path=rcfile_path ~name="rcfile" ~value=rcfile ~id="sciprt" ~preview_class="hidden" /}}
+					{{include tmpl="#tmplModal" ~type="text" ~path=rcfile_path ~name="rcfile" ~value=rcfile ~id="sciprt" ~preview_class="hidden" /}}
 					{{/if}}
 				</script>
 				
 				<script type="text/x-jsrender" id="tmplModal">
-					<{{:~header_tag}}><a data-toggle="modal" data-target="#full-screen-{{:~id}}">{{>~name}}</a></{{:~header_tag}}>
+					<h3><a data-toggle="modal" data-target="#full-screen-{{:~id}}">{{>~name}}</a></h3>
 					{{if ~type == 'text'}}
 					<pre class="pre-scrollable {{:~preview_class}}">{{if ~value}}{{>~value}}{{else}}empty so far{{/if}}</pre>
 					{{else ~type == 'iframe'}}
@@ -486,6 +486,11 @@ def html(e = None):
 						<td>{{>~format(#data, ~stats[#data]) || "N/A"}}</td>
 					</tr>
 				</script>
+			</div>
+		</div>
+		<div class="navbar navbar-fixed-bottom">
+			<div class="container">
+				<h3>this is a <a href="https://github.com/vadimkantorov/%s">%s</a> dashboard</h3>
 			</div>
 		</div>
 	</body>
@@ -573,7 +578,7 @@ def html(e = None):
 	}
 
 	with open(P.html_report, 'w') as f:
-		f.write(HTML_PATTERN % (e.name_code, json.dumps(report)))
+		f.write(HTML_PATTERN % (e.name_code, json.dumps(report), config.tool_name, config.tool_name))
 
 def clean():
 	if os.path.exists(P.experiment_root):
