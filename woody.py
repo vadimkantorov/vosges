@@ -1,4 +1,5 @@
 #TODO: common env
+#TODO: show json decoding and other file errors in html log
 
 import os
 import re
@@ -523,13 +524,14 @@ def html(e = None):
 		return report_stage
 
 	def augment_results(results):
-		for r in results:
+		for i, r in enumerate(results):
 			if not isinstance(r, dict):
 				r = {'type' : 'text', 'path' : r}
 			if r.get('name') == None and r.get('path') != None:
 				r['name'] = os.path.basename(r['path'])
 			if r['type'] == 'text' and r.get('value') == None and r.get('path') != None:
 				r['value'] = P.read_or_empty(r['path'])
+			results[i] = r
 		return results
 
 	report = {
