@@ -587,8 +587,8 @@ def clean():
 def stop():
 	print 'Stopping the experiment "%s"...' % P.experiment_name_code
 	Q.delete_jobs(Q.get_jobs(P.experiment_name_code))
-	while Q.get_jobs(P.experiment_name_code) > 0:
-		print '%d jobs are still not deleted. Sleeping...' % Q.get_jobs(P.experiment_name_code)
+	while len(Q.get_jobs(P.experiment_name_code)) > 0:
+		print '%d jobs are still not deleted. Sleeping...' % len(Q.get_jobs(P.experiment_name_code))
 		time.sleep(config.sleep_between_queue_checks)
 	print 'Done.\n'
 	
