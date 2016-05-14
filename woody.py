@@ -1,3 +1,5 @@
+#TODO: common env
+
 import os
 import re
 import sys
@@ -522,8 +524,10 @@ def html(e = None):
 
 	def augment_results(results):
 		for r in results:
+			if r.get('name') == None and r.get('path') != None:
+				r['name'] = os.path.basename(r['path'])
 			if r['type'] == 'text' and r.get('value') == None and r.get('path') != None:
-				r['value'] = P.read_or_empty(r.get('path'))
+				r['value'] = P.read_or_empty(r['path'])
 		return results
 
 	report = {
