@@ -585,7 +585,13 @@ def clean():
 		shutil.rmtree(P.experiment_root)
 
 def stop():
+	print 'Stopping the experiment "%s"...' % P.experiment_name_code
 	Q.delete_jobs(Q.get_jobs(P.experiment_name_code))
+	while Q.get_jobs(P.experiment_name_code) > 0:
+		print '%d jobs are still not deleted. Sleeping...' % Q.get_jobs(P.experiment_name_code)
+		time.sleep(config.sleep_between_queue_checks)
+	print 'Done.\n'
+	
 
 def init(extra_env = []):
 	extra_env = dict([k_eq_v.split('=') for k_eq_v in extra_env])
@@ -627,7 +633,7 @@ def gen(extra_env, force, locally):
 	
 	e = init(extra_env)
 
-	print '%-30s "%s"' % ('Generating the experiment to:', P.locally_generated_script if locally else P.experiment_root)
+	print '%-30s %s' % ('Generating the experiment to:', P.locally_generated_script if locally else P.experiment_root)
 	for p in [p for stage in e.stages for job in stage.jobs for p in job.get_used_paths() if p.domakedirs == True and not os.path.exists(str(p))]:
 		os.makedirs(str(p))
 	
