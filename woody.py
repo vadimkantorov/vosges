@@ -413,9 +413,9 @@ def html(e = None):
 					{{/for}}
 					{{/if}}
 
-					{{include tmpl="#tmplModal" ~type="text" ~path=stdout_path ~name="stdout" ~value=stdout ~id="stdout" /}}
+					{{include tmpl="#tmplModal" ~type="text" ~path=stdout_path ~name="stdout" ~value=stdout ~id="stdout" ~preview_class="log-output" /}}
 					
-					{{include tmpl="#tmplModal" ~type="text" ~path=stderr_path  ~name="stderr" ~value=stderr ~id="stderr" /}}
+					{{include tmpl="#tmplModal" ~type="text" ~path=stderr_path  ~name="stderr" ~value=stderr ~id="stderr" ~preview_class="log-output" /}}
 
 					{{if env}}
 					<h3>user env</h3>
@@ -614,8 +614,7 @@ def init(extra_env = []):
 def gen(extra_env, force, locally):
 	if not locally and len(Q.get_jobs(P.experiment_name_code)) > 0:
 		if force == False:
-			print 'Please stop existing jobs for this experiment first: '
-			print 'Add --force to your command or type:'
+			print 'Please stop existing jobs for this experiment first. Add --force to the previous command or type:'
 			print ''
 			print '%s stop "%s"' % (config.tool_name, P.exp_py)
 			print ''
