@@ -1,9 +1,4 @@
-#TODO: run --locally
-#TODO: modal flyouts for stdout, stderr etc; panels
-#TODO: html command
-#TODO: explog to include Q's log
-#TODO: magic results
-#TODO: special API for modifying PATH and LD_LIBRARY_PATH
+#TODO: special API for modifying PATH and LD_LIBRARY_PATH, source
 
 import os
 import re
@@ -20,8 +15,6 @@ import xml.dom.minidom
 
 class config:
 	tool_name = 'woody'
-	magic = '%' + tool_name
-	
 	root = '.' + tool_name
 	html_root = None
 	html_root_alias = None
@@ -37,7 +30,7 @@ class config:
 	parallel_jobs = 4
 	batch_size = 1
 
-	items = staticmethod(lambda: [(k, v) for k, v in vars(config).items() if '__' not in k and k not in ['items', 'tool_name', 'magic']])
+	items = staticmethod(lambda: [(k, v) for k, v in vars(config).items() if '__' not in k and k not in ['items', 'tool_name']])
 
 class P:
 	jobdir = staticmethod(lambda stage_name: os.path.join(P.job, stage_name))
@@ -52,7 +45,10 @@ class P:
 	@staticmethod
 	def read_or_empty(file_path):
 		subprocess.check_call(['touch', file_path]) # workaround for NFS caching
-		return open(file_path).read() if os.path.exists(file_path) else ''
+		if os.path.exists(file_path):
+			with open(file_path, 'r') as f:
+				return f.read()
+		return ''
 
 	@staticmethod
 	def init(exp_py, rcfile):
@@ -167,6 +163,7 @@ class Experiment:
 				(Experiment.ExecutionStatus.error, Experiment.ExecutionStatus.killed) : None,
 				(Experiment.ExecutionStatus.canceled, ): ()
 			}
+
 			return [status[0] for status, extra_statuses in conditions.items() if any([job.status in status for job in self.jobs]) and (extra_statuses == None or all([job.status in status + extra_statuses for job in self.jobs]))][0]
 
 		def job_batch_count(self):
@@ -183,11 +180,6 @@ class Experiment:
 	
 	def has_failed_stages(self):
 		return any([stage.calculate_aggregate_status() == Experiment.ExecutionStatus.error for stage in self.stages])
-
-	def cancel_stages_after(self, failed_stage):
-		for stage in self.stages[1 + self.stages.index(failed_stage):]:
-			for job in stage.jobs:
-				job.status = Experiment.ExecutionStatus.canceled
 
 	def config(self, **kwargs):
 		for k, v in kwargs.items():
@@ -216,8 +208,38 @@ class bash:
 
 	def generate_bash_script_lines(self):
 		return [str(self.script_path) + ' ' + self.args]
+
+class Magic:
+	prefix = '%' + config.tool_name
+	class Action:
+		stats = 'stats'
+		environ = 'environ'
+		results = 'results'
+		status = 'status'
+
+	def __init__(self, stderr):
+		self.stderr = stderr
 	
-def html(e):
+	def findall(self, action):
+		return re.findall('%s %s (.+)$' % (Magic.prefix, action), self.stderr, re.MULTILINE) 
+
+	def stats(self):
+		return dict(itertools.chain(*map(dict.items, map(json.loads, self.findall(Magic.Action.stats)) or [{}])))
+
+	def environ(self):
+		return (map(json.loads, self.findall(Magic.Action.environ)) or [{}])[0]
+
+	def results(self):
+		return map(json.loads, self.findall(Magic.Action.results))
+
+	def status(self):
+		return (map(json.loads, self.findall(Magic.Action.status)) or [None])[-1]
+
+	@staticmethod
+	def echo(action, arg):
+		return '%s %s %s' % (Magic.prefix, action, json.dumps(arg))
+	
+def html(e = None):
 	HTML_PATTERN = '''
 <!DOCTYPE html>
 
@@ -243,18 +265,7 @@ def html(e):
 			.job-status-canceled {background-color: salmon}
 
 			.experiment-pane {overflow: auto}
-			.accordion-toggle:after {
-			    /* symbol for "opening" panels */
-			    font-family: 'Glyphicons Halflings';  /* essential for enabling glyphicon */
-			    content: "\e114";    /* adjust as needed, taken from bootstrap.css */
-			    float: right;        /* adjust as needed */
-			    color: grey;         /* adjust as needed */
-			}
-
-			.accordion-toggle.collapsed:after {
-				/* symbol for "collapsed" panels */
-				content: "\e080";    /* adjust as needed, taken from bootstrap.css */
-			}
+			a {cursor: pointer;}
 		</style>
 	</head>
 	<body>
@@ -306,8 +317,7 @@ def html(e):
 
 					var render_details = function(obj, ctx) {
 						$('#divDetails').html($('#tmplDetails').render(obj, ctx));
-						$('[data-toggle="collapse"][title]:not([title=""])').tooltip({trigger : 'manual'}).tooltip('show');
-						$('pre').each(function() {$(this).scrollTop(this.scrollHeight);});
+						$('pre .log-output').each(function() {$(this).scrollTop(this.scrollHeight);});
 					};
 			
 					$('#divExp').html($('#tmplExp').render(report));
@@ -381,20 +391,31 @@ def html(e):
 				<div class="col-sm-4 experiment-pane" id="divDetails"></div>
 				<script type="text/x-jsrender" id="tmplDetails">
 					<h1>{{if ~header}}<a href="{{>~header.href}}">{{>~header.text}}</a>{{/if}}&nbsp;</h1>
-					<h3><a data-toggle="collapse" data-target=".extended-stats" data-placement="right" title="toggle all">stats &amp; config</a></h3>
+					<h3><a data-toggle="collapse" data-target=".extended-stats">stats &amp; config</a></h3>
 					<table class="table table-striped">
 						{{for ~stats_keys_reduced ~stats=stats tmpl="#tmplStats" /}}
 						{{for ~sortedkeys(stats, ~stats_keys_reduced) ~stats=stats tmpl="#tmplStats" ~row_class="collapse extended-stats" /}}
 					</table>
 
-					<h3>stdout</h3>
-					<pre class="pre-scrollable">{{if stdout}}{{>stdout}}{{else}}empty so far{{/if}}</pre>
+					{{if results}}
+					<h3>results</h3>
+					{{for results}}
+						{{if type == 'text'}}
+							{{include tmpl="#tmplPre" ~header_tag="h4" ~path=path ~name=name ~value=value ~id="result-" + #parent.index  /}}
+						{{else type == 'iframe'}}
+							{{include tmpl="#tmplIframe" ~header_tag="h4" ~path=path ~name=name ~value=path ~id="result-" + #parent.index /}}
+						{{/if}}
+					{{else}}
+						<pre>no results provided</pre>
+					{{/for}}
+					{{/if}}
 
-					<h3>stderr</h3>
-					<pre class="pre-scrollable">{{if stderr}}{{>stderr}}{{else}}empty so far{{/if}}</pre>
+					{{include tmpl="#tmplPre" ~header_tag="h3" ~path=stdout_path ~name="stdout" ~value=stdout ~id="stdout" /}}
+					
+					{{include tmpl="#tmplPre" ~header_tag="h3" ~path=stderr_path  ~name="stderr" ~value=stderr ~id="stderr" /}}
 
 					{{if env}}
-					<h3>user env</a></h3>
+					<h3>user env</h3>
 					<table class="table table-striped">
 						{{for ~sortedkeys(env) ~env=env tmpl="#tmplEnv"}}
 						{{else}}
@@ -402,13 +423,15 @@ def html(e):
 						{{/for}}
 					</table>
 					{{/if}}
-
+					
 					{{if environ}}
 					<h3><a data-toggle="collapse" data-target=".extended-environ">effective env</a></h3>
-					<table class="table table-striped">
-						{{for ~environ_keys_reduced ~env=environ tmpl="#tmplEnv" /}}
-						{{for ~sortedkeys(environ, ~environ_keys_reduced) ~env=environ tmpl="#tmplEnv" ~row_class="collapse extended-environ" /}}
-					</table>
+					<div class="collapse extended-environ">
+						<table class="table table-striped">
+							{{for ~environ_keys_reduced ~env=environ tmpl="#tmplEnv" /}}
+							{{for ~sortedkeys(environ, ~environ_keys_reduced) ~env=environ tmpl="#tmplEnv" /}}
+						</table>
+					</div>
 					{{/if}}
 
 					{{if script}}
@@ -419,6 +442,44 @@ def html(e):
 					<h3><a data-toggle="collapse" data-target=".extended-rcfile">rcfile</a></h3>
 					<pre class="pre-scrollable collapse extended-rcfile">{{>rcfile}}</pre>
 					{{/if}}
+				</script>
+				
+				<script type="text/x-jsrender" id="tmplPre">
+					<{{:~header_tag}}><a data-toggle="modal" data-target="#full-screen-{{:~id}}">{{>~name}}</a></{{:~header_tag}}>
+					<pre class="pre-scrollable">{{if ~value}}{{>~value}}{{else}}empty so far{{/if}}</pre>
+
+					<div id="full-screen-{{:~id}}" class="modal" tabindex="-1" style="height:100%%">
+						<div class="modal-dialog modal-content" style="height:90%%">
+							<div class="modal-header">
+								<button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
+								<h4 class="modal-title">{{>~name}}</h4>
+							</div>
+							<div class="modal-body" style="height:100%%">
+								<p>path:&nbsp;{{if ~path}}<a href="{{:~path}}">{{>~path}}</a>{{else}}no path provided{{/if}}</p>
+								<pre style="height: 90%%">{{>~value}}</pre>
+							</div>
+						</div>
+					</div>
+				</script>
+
+				<script type="text/x-jsrender" id="tmplIframe">
+					<{{:~header_tag}}><a data-toggle="modal" data-target="#full-screen-{{:~id}}">{{>~name}}</a></{{:~header_tag}}>
+					<div class="embed-responsive embed-responsive-16by9">
+						<iframe src="{{:~value}}"></iframe>
+					</div>
+
+					<div id="full-screen-{{:~id}}" class="modal" tabindex="-1" style="height:100%%">
+						<div class="modal-dialog modal-content" style="height:90%%; width: 50%%">
+							<div class="modal-header">
+								<button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
+								<h4 class="modal-title">{{>~name}}</h4>
+							</div>
+							<div class="modal-body" style="height:100%%">
+								<p>path:&nbsp;{{if ~path}}<a href="{{:~path}}">{{>~path}}</a>{{else}}no path provided{{/if}}</p>
+								<iframe style="height: 90%%; width: 100%%" src="{{:~value}}"></iframe>
+							</div>
+						</div>
+					</div>
 				</script>
 
 				<script type="text/x-jsrender" id="tmplEnv">
@@ -440,28 +501,45 @@ def html(e):
 </html>
 	'''
 
+	if e == None:
+		print 'You are in debug mode, the report will not be 100% complete and accurate.'
+		e = init()
+		for stage in e.stages:
+			for job_idx, job in enumerate(stage.jobs):
+				job.status = Magic(P.read_or_empty(P.joblogfiles(stage.name, job_idx)[1])).status() or job.status
+		print '%-30s %s' % ('Report will be at:', P.html_report_link)
+
 	sgejoblog_paths = lambda stage, k: [P.sgejoblogfiles(stage.name, sgejob_idx)[k] for sgejob_idx in range(stage.job_batch_count())]
 	sgejoblog = lambda stage, k: '\n'.join(['#BATCH #%d (%s)\n%s\n\n' % (sgejob_idx, log_file_path, P.read_or_empty(log_file_path)) for sgejob_idx, log_file_path in enumerate(sgejoblog_paths(stage, k))])
 	sgejobscript = lambda stage: '\n'.join(['#BATCH #%d (%s)\n%s\n\n' % (sgejob_idx, sgejob_path, P.read_or_empty(sgejob_path)) for sgejob_path in [P.sgejobfile(stage.name, sgejob_idx) for sgejob_idx in range(stage.job_batch_count())]])
 	truncate_stdout = lambda stdout: stdout[:config.max_stdout_size / 2] + '\n\n[%d characters skipped]\n\n' % (len(stdout) - 2 * (config.max_stdout_size / 2)) + stdout[-(config.max_stdout_size / 2):] if stdout != None and len(stdout) > config.max_stdout_size else stdout
-	do_magic_and_merge = lambda stderr, action, dics: reduce(lambda x, y: dict(x.items() + y.items()), dics + [json.loads(magic_argument) for magic_action, magic_argument in re.findall('%s (.+) (.+)$' % config.magic, stderr, re.MULTILINE) if magic_action == action], {})
 
-	exp_job_logs = {obj : map(P.read_or_empty, log_paths) for obj, log_paths in [(e, P.explogfiles())] + [(job, P.joblogfiles(stage.name, job_idx)) for stage in e.stages for job_idx, job in enumerate(stage.jobs)]}
+	merge_dicts = lambda dicts: reduce(lambda x, y: dict(x.items() + y.items()), dicts)
+	
+	exp_job_logs = {obj : (P.read_or_empty(log_paths[0]), Magic(P.read_or_empty(log_paths[1]))) for obj, log_paths in [(e, P.explogfiles())] + [(job, P.joblogfiles(stage.name, job_idx)) for stage in e.stages for job_idx, job in enumerate(stage.jobs)]}
 
 	def put_extra_stage_stats(report_stage):
 		wall_clock_seconds = filter(lambda x: x != None, [report_job['stats'].get('time_wall_clock_seconds') for report_job in report_stage['jobs']])
 		report_stage['stats']['time_wall_clock_avg_seconds'] = float(sum(wall_clock_seconds)) / len(wall_clock_seconds) if wall_clock_seconds else None
 		return report_stage
 
+	def augment_results(results):
+		for r in results:
+			if r['type'] == 'text' and r.get('value') == None and r.get('path') != None:
+				r['value'] = P.read_or_empty(r.get('path'))
+		return results
+
 	report = {
 		'name' : e.name, 
 		'stdout' : exp_job_logs[e][0], 
-		'stderr' : exp_job_logs[e][1], 
+		'stderr' : exp_job_logs[e][1].stderr, 
 		'script' : P.read_or_empty(P.exp_py), 
 		'rcfile' : P.read_or_empty(P.rcfile) if P.rcfile != None else None,
-		'environ' : dict(os.environ),
+		'environ' : exp_job_logs[e][1].environ(),
 		'env' : e.env,
-		'stats' : do_magic_and_merge(exp_job_logs[e][1], 'stats', [{
+		'stdout_path' : P.explogfiles()[0],
+		'stderr_path' : P.explogfiles()[1],
+		'stats' : merge_dicts([{
 			'time_updated' : time.strftime(config.strftime), 
 			'experiment_root' : P.experiment_root,
 			'exp_py' : os.path.abspath(P.exp_py),
@@ -469,8 +547,8 @@ def html(e):
 			'name_code' : e.name_code, 
 			'html_root' : P.html_root, 
 			'argv_joined' : ' '.join(['"%s"' % arg if ' ' in arg else arg for arg in sys.argv])}, 
-			dict(zip(['stdout_path', 'stderr_path'], P.explogfiles())),
 			{'config.' + k : v for k, v in config.items()},
+			exp_job_logs[e][1].stats()
 		]),
 		'stages' : [put_extra_stage_stats({
 			'name' : stage.name, 
@@ -478,23 +556,24 @@ def html(e):
 			'stderr' : sgejoblog(stage, 1), 
 			'script' : sgejobscript(stage),
 			'status' : stage.calculate_aggregate_status(), 
+			'stdout_path' : '\n'.join(sgejoblog_paths(stage, 0)),
+			'stderr_path' : '\n'.join(sgejoblog_paths(stage, 1)),
 			'stats' : {
-				'stdout_path' : '\n'.join(sgejoblog_paths(stage, 0)),
-				'stderr_path' : '\n'.join(sgejoblog_paths(stage, 1)),
 				'mem_lo_gb' : stage.mem_lo_gb, 
 				'mem_hi_gb' : stage.mem_hi_gb,
 			},
 			'jobs' : [{
 				'name' : job.name, 
 				'stdout' : truncate_stdout(exp_job_logs[job][0]),
-				'stderr' : exp_job_logs[job][1], 
+				'stderr' : exp_job_logs[job][1].stderr, 
 				'script' : P.read_or_empty(P.jobfile(stage.name, job_idx)),
 				'status' : job.status, 
-				'environ' : do_magic_and_merge(exp_job_logs[job][1], 'environ', []),
+				'environ' : exp_job_logs[job][1].environ(),
 				'env' : {k : str(v) for k, v in job.env.items()},
-				'stats' : do_magic_and_merge(exp_job_logs[job][1], 'stats', [
-					dict(zip(['stdout_path', 'stderr_path'], P.joblogfiles(stage.name, job_idx)))
-				]),
+				'results' : augment_results(exp_job_logs[job][1].results()),
+				'stdout_path' : P.joblogfiles(stage.name, job_idx)[0],
+				'stderr_path' : P.joblogfiles(stage.name, job_idx)[1],
+				'stats' : exp_job_logs[job][1].stats()
 			} for job_idx, job in enumerate(stage.jobs)] 
 		}) for stage in e.stages]
 	}
@@ -509,7 +588,7 @@ def clean():
 def stop():
 	Q.delete_jobs(Q.get_jobs(P.experiment_name_code))
 
-def init(extra_env):
+def init(extra_env = []):
 	extra_env = dict([k_eq_v.split('=') for k_eq_v in extra_env])
 	for k, v in extra_env.items():
 		os.environ[k] = v
@@ -533,7 +612,21 @@ def init(extra_env):
 	
 	return e
 
-def gen(locally, extra_env):
+def gen(extra_env, force, locally):
+	if not locally and len(Q.get_jobs(P.experiment_name_code)) > 0:
+		if force == False:
+			print 'Please stop existing jobs for this experiment first: '
+			print 'Add --force to your command or type:'
+			print ''
+			print '%s stop "%s"' % (config.tool_name, P.exp_py)
+			print ''
+			sys.exit(1)
+		else:
+			stop()
+
+	if not locally:
+		clean()
+	
 	e = init(extra_env)
 
 	print '%-30s "%s"' % ('Generating the experiment to:', P.locally_generated_script if locally else P.experiment_root)
@@ -556,6 +649,7 @@ def gen(locally, extra_env):
 			with open(P.jobfile(stage.name, job_idx), 'w') as f:
 				f.write('\n'.join(['#! /bin/bash'] + generate_job_bash_script_lines(stage, job, job_idx)))
 
+	qq = lambda s: s.replace('"', '\\"')
 	for stage in e.stages:
 		for sgejob_idx in range(stage.job_batch_count()):
 			with open(P.sgejobfile(stage.name, sgejob_idx), 'w') as f:
@@ -573,21 +667,22 @@ def gen(locally, extra_env):
 					job_stderr_path = P.joblogfiles(stage.name, job_idx)[1]
 					f.write('\n'.join([
 						'# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, stage.jobs[job_idx].name, job_idx),
-						'''echo "%s stats {'time_started' : '$(date +"%s")'}" > "%s"''' % (config.magic, config.strftime, job_stderr_path),
-						'''echo "%s stats {'hostname' : '$(hostname)'}" >> "%s"''' % (config.magic, job_stderr_path),
-						'''python -c "import json, os; print('%s environ ' + json.dumps(dict(os.environ)))" >> "%s"''' % (config.magic, job_stderr_path),
-						'''/usr/bin/time -f "%s stats {'exit_code' : %%x, 'time_user_seconds' : %%U, 'time_system_seconds' : %%S, 'time_wall_clock_seconds' : %%e, 'rss_max_kbytes' : %%M, 'rss_avg_kbytes' : %%t, 'page_faults_major' : %%F, 'page_faults_minor' : %%R, 'io_inputs' : %%I, 'io_outputs' : %%O, 'context_switches_voluntary' : %%w, 'context_switches_involuntary' : %%c, 'cpu_percentage' : '%%P', 'signals_received' : %%k}" bash -e "%s" > "%s" 2>> "%s"''' % ((config.magic.replace('%', '%%'), P.jobfile(stage.name, job_idx)) + P.joblogfiles(stage.name, job_idx)),
-						'''echo "%s stats {'time_finished' : '$(date +"%s")'}" >> "%s"''' % (config.magic, config.strftime, job_stderr_path),
+						'echo "' + qq(Magic.echo(Magic.Action.status, Experiment.ExecutionStatus.running)) + '" > "%s"' % job_stderr_path,
+						'echo "' + qq(Magic.echo(Magic.Action.stats, {'time_started' : "$(date +'%s')" % config.strftime})) + '" >> "%s"' % job_stderr_path,
+						'echo "' + qq(Magic.echo(Magic.Action.stats, {'hostname' : '$(hostname)'})) + '" >> "%s"' % job_stderr_path,
+						'''python -c "import json, os; print('%s %s ' + json.dumps(dict(os.environ)))" >> "%s"''' % (Magic.prefix, Magic.Action.environ, job_stderr_path),
+						'''/usr/bin/time -f '%s %s {"exit_code" : %%x, "time_user_seconds" : %%U, "time_system_seconds" : %%S, "time_wall_clock_seconds" : %%e, "rss_max_kbytes" : %%M, "rss_avg_kbytes" : %%t, "page_faults_major" : %%F, "page_faults_minor" : %%R, "io_inputs" : %%I, "io_outputs" : %%O, "context_switches_voluntary" : %%w, "context_switches_involuntary" : %%c, "cpu_percentage" : "%%P", "signals_received" : %%k}' bash -e "%s" > "%s" 2>> "%s"''' % ((Magic.prefix.replace('%', '%%'), Magic.Action.stats, P.jobfile(stage.name, job_idx)) + P.joblogfiles(stage.name, job_idx)),
+						'''([ "$?" == "0" ] && (echo "%s") || (echo "%s")) >> "%s"''' % (qq(Magic.echo(Magic.Action.status, Experiment.ExecutionStatus.success)), qq(Magic.echo(Magic.Action.status, Experiment.ExecutionStatus.error)), job_stderr_path),
+						'echo "' + qq(Magic.echo(Magic.Action.stats, {'time_finished' : "$(date +'%s')" % config.strftime})) + '" >> "%s"' % job_stderr_path,
 						'# end',
 						''
 					]))
 	return e
 
-def run(locally, extra_env, dry, verbose, notify):
-	clean()
-	e = gen(locally, extra_env)
+def run(extra_env, force, dry, verbose, notify):
+	e = gen(extra_env, force, False)
 
-	print '%-30s "%s"' % ('Report is at:', P.html_report_link)
+	print '%-30s %s' % ('Report will be at:', P.html_report_link)
 	print ''
 
 	html(e)
@@ -596,39 +691,55 @@ def run(locally, extra_env, dry, verbose, notify):
 		print 'Dry run. Quitting.'
 		return
 
-	class explog:
-		stdout, stderr = map(lambda log_path: open(log_path, 'w'), P.explogfiles())
-		def __init__(self, s, write_to_stdout = True, new_line = '\n'):
-			explog.stderr.write(s + new_line)
-			explog.stderr.flush()
-			if write_to_stdout:
-				explog.stdout.write(s + new_line)
-				explog.stdout.flush()
-				sys.stdout.write(s + new_line)
-				sys.stdout.flush()
+	class Tee:
+		def __init__(self, diskfile, dup):
+			self.diskfile = diskfile
+			self.dup = dup
+
+		def write(self, message):
+			self.diskfile.write(message)
+			self.diskfile.flush()
+			for stream in self.dup:
+				stream.write(message)
+				stream.flush()
+
+		def flush(self):
+			self.diskfile.flush()
+			for stream in self.dup:
+				stream.flush()
+
+		def nodup(self):
+			return Tee(self.diskfile, [])
+
+		def verbose(self):
+			return Tee(self.diskfile, self.dup if verbose else [])
+
+	sys.stderr = Tee(open(P.explogfiles()[1], 'w'), [sys.__stderr__])
+	sys.stdout = Tee(open(P.explogfiles()[0], 'w'), [sys.__stdout__, sys.stderr.nodup()])
 
 	sgejob2job = {}
 
-	def update_status(stage):
-		active_jobs = [job for sgejob in Q.get_jobs(e.name_code) for job in sgejob2job[sgejob]]
+	def put_status(stage, job, status):
+		with open(P.joblogfiles(stage.name, stage.jobs.index(job))[1], 'a') as f:
+			print >> f, Magic.echo(Magic.Action.status, status)
+		job.status = status
 		
+	def update_status(stage, new_status = None):
+		active_jobs = [job for sgejob in Q.get_jobs(e.name_code) for job in sgejob2job[sgejob]]
 		for job_idx, job in enumerate(stage.jobs):
-			stderr = P.read_or_empty(P.joblogfiles(stage.name, job_idx)[1])
-			if '''%s stats {'time_started' :''' % config.magic in stderr:
-				job.status = Experiment.ExecutionStatus.running
-			if '''%s stats {'exit_code' : 0''' % config.magic in stderr:
-				job.status = Experiment.ExecutionStatus.success
-			if '''Command exited with non-zero status''' in stderr:
-				job.status = Experiment.ExecutionStatus.error
-			if job.status == Experiment.ExecutionStatus.running and job not in active_jobs:
-				job.status = Experiment.ExecutionStatus.killed
+			if new_status:
+				put_status(stage, job, new_status)
+			else:
+				job.status = Magic(P.read_or_empty(P.joblogfiles(stage.name, job_idx)[1])).status() or job.status
+				if job.status == Experiment.ExecutionStatus.running and job not in active_jobs:
+					put_status(stage, job, Experiment.ExecutionStatus.killed)
 
 	def wait_if_more_jobs_than(stage, num_jobs):
 		prev_msg = None
 		while len(Q.get_jobs(e.name_code)) > num_jobs:
 			msg = 'Running %d jobs, waiting %d jobs.' % (len(Q.get_jobs(e.name_code, 'r')), len(Q.get_jobs(e.name_code, 'qw')))
 			if msg != prev_msg:
-				explog(msg, verbose)
+				print >> sys.stderr.verbose(), msg
 				prev_msg = msg
 			time.sleep(config.sleep_between_queue_checks)
 			update_status(stage)
@@ -636,12 +747,13 @@ def run(locally, extra_env, dry, verbose, notify):
 		
 		update_status(stage)
 		html(e)
-	
-	explog('''%s stats {'time_started' : '%s'}\n''' % (config.magic, time.strftime(config.strftime)), False)
+
+	print >> sys.stderr.nodup(), Magic.echo(Magic.Action.stats, {'time_started' : time.strftime(config.strftime)})
+	print >> sys.stderr.nodup(), Magic.echo(Magic.Action.environ, dict(os.environ))
 
 	for stage_idx, stage in enumerate(e.stages):
 		time_started = time.time()
-		explog('%-30s ' % ('%s (%d jobs)' % (stage.name, len(stage.jobs))), new_line = '')
+		sys.stdout.write('%-30s ' % ('%s (%d jobs)' % (stage.name, len(stage.jobs))))
 		for sgejob_idx in range(stage.job_batch_count()):
 			wait_if_more_jobs_than(stage, stage.parallel_jobs)
 			sgejob = Q.submit_job(P.sgejobfile(stage.name, sgejob_idx))
@@ -654,26 +766,30 @@ def run(locally, extra_env, dry, verbose, notify):
 		elapsed = '%dh%dm' % (elapsed / 3600, math.ceil(float(elapsed % 3600) / 60))
 
 		if e.has_failed_stages():
-			e.cancel_stages_after(stage)
-			explog('[error, elapsed %s]' % elapsed)
+			for stage_to_cancel in e.stages[1 + stage_idx:]:
+				update_status(stage_to_cancel, Experiment.ExecutionStatus.canceled)
+
+			print '[error, elapsed %s]' % elapsed
 			if notify and config.notification_command_on_error:
-				explog('Executing custom notification_command_on_error.')
-				explog('\nExit code: %d' % subprocess.call(config.notification_command_on_error.format(NAME_CODE = e.name_code, HTML_REPORT_LINK = P.html_report_link, FAILED_STAGE = stage.name, FAILED_JOB = [job.name for job in stage.jobs if job.has_failed()][0]), shell = True, stdout = explog.stderr))
-			explog('\nStopping the experiment. Skipped stages: %s' % ','.join([e.stages[si].name for si in range(stage_idx + 1, len(e.stages))]))
+				print 'Executing custom notification_command_on_error.'
+				cmd = config.notification_command_on_error.format(NAME_CODE = e.name_code, HTML_REPORT_LINK = P.html_report_link, FAILED_STAGE = stage.name, FAILED_JOB = [job.name for job in stage.jobs if job.has_failed()][0])
+				print >> sys.stderr.verbose(), 'Command: %s' % cmd
+				print '\nExit code: %d' % subprocess.call(cmd, shell = True, stdout = sys.stderr.diskfile, stderr = sys.stderr.diskfile)
+			print '\nStopping the experiment. Skipped stages: %s' % ','.join([e.stages[si].name for si in range(stage_idx + 1, len(e.stages))])
 			break
 		else:
-			explog('[ok, elapsed %s]' % elapsed)
+			print '[ok, elapsed %s]' % elapsed
 	
-	explog('''%s stats {'time_finished' : '%s'}''' % (config.magic, time.strftime(config.strftime)), False)
+	print >> sys.stderr.nodup(), Magic.echo(Magic.Action.stats, {'time_finished' : time.strftime(config.strftime)})
 
 	if not e.has_failed_stages():
 		if notify and config.notification_command_on_success:
-			explog('Executing custom notification_command_on_success.')
-			explog('Exit code: %d' % subprocess.call(config.notification_command_on_success.format(NAME_CODE = e.name_code, HTML_REPORT_LINK = P.html_report_link), shell = True, stdout = explog.stderr, stderr = explog.stderr))
-		explog('\nALL OK. KTHXBAI!')
+			print 'Executing custom notification_command_on_success.'
+			cmd = config.notification_command_on_success.format(NAME_CODE = e.name_code, HTML_REPORT_LINK = P.html_report_link)
+			print >> sys.stderr.verbose(), 'Command: %s' % cmd
+			print 'Exit code: %d' % subprocess.call(cmd, shell = True, stdout = sys.stderr.diskfile, stderr = sys.stderr.diskfile)
+		print '\nALL OK. KTHXBAI!'
 	
-	explog.stdout.close()
-	explog.stderr.close()
 	html(e)
 
 if __name__ == '__main__':
@@ -696,8 +812,8 @@ if __name__ == '__main__':
 	add_config_fields(run_parent, ['notification_command_on_error', 'notification_command_on_success', 'strftime', 'max_stdout_size', 'sleep_between_queue_checks'])
 	
 	gen_run_parent = argparse.ArgumentParser(add_help = False)
-	gen_run_parent.add_argument('--locally', action = 'store_true')
 	gen_run_parent.add_argument('-v', dest = 'extra_env', action = 'append', default = [])
+	gen_run_parent.add_argument('--force', action = 'store_true')
 
 	parser = argparse.ArgumentParser(parents = [run_parent, gen_parent])
 	parser.add_argument('--rcfile', default = os.path.expanduser('~/.%src' % config.tool_name))
@@ -706,7 +822,11 @@ if __name__ == '__main__':
 	subparsers = parser.add_subparsers()
 	subparsers.add_parser('stop', parents = [common_parent]).set_defaults(func = stop)
 	subparsers.add_parser('clean', parents = [common_parent]).set_defaults(func = clean)
-	subparsers.add_parser('gen', parents = [common_parent, gen_parent, gen_run_parent]).set_defaults(func = gen)
+	subparsers.add_parser('html', parents = [common_parent]).set_defaults(func = html)
+	
+	cmd = subparsers.add_parser('gen', parents = [common_parent, gen_parent, gen_run_parent])
+	cmd.set_defaults(func = gen)
+	cmd.add_argument('--locally', action = 'store_true')
 	
 	cmd = subparsers.add_parser('run', parents = [common_parent, gen_parent, run_parent, gen_run_parent])
 	cmd.set_defaults(func = run)
@@ -732,3 +852,4 @@ if __name__ == '__main__':
 		print 'Quitting (Ctrl+C pressed). To stop jobs:'
 		print ''
 		print '%s stop "%s"' % (config.tool_name, P.exp_py)
+		print ''
