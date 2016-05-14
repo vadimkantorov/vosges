@@ -355,7 +355,7 @@ def html(e = None):
 		</script>
 		<div class="container">
 			<div class="row">
-				<div class="col-sm-offset-8 col-sm-4 text-right">
+				<div class="col-sm-12 text-right">
 					<h3>this is a <a href="https://github.com/vadimkantorov/%s">%s</a> dashboard</h3>
 				</div>
 			</div>
