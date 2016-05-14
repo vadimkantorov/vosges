@@ -271,7 +271,7 @@ def html(e = None):
 			.experiment-pane {overflow: auto}
 			a {cursor: pointer;}
 
-			.modal-dialog, .modal-content {height: 90%%; width: 50%%}
+			.modal-dialog, .modal-content {height: 90%%;}
 			.modal-body { height:calc(100%% - 100px); }
 			.full-screen {height:100%%; width: 100%%}
 		</style>
@@ -354,6 +354,12 @@ def html(e = None):
 
 		</script>
 		<div class="container">
+			<div class="row">
+				<div class="col-sm-offset-8 col-sm-4 text-right">
+					<h3>this is a <a href="https://github.com/vadimkantorov/%s">%s</a> dashboard</h3>
+				</div>
+			</div>
+			<br />
 			<div class="row">
 				<div class="col-sm-4 experiment-pane" id="divExp"></div>
 				<script type="text/x-jsrender" id="tmplExp">
@@ -486,11 +492,6 @@ def html(e = None):
 						<td>{{>~format(#data, ~stats[#data]) || "N/A"}}</td>
 					</tr>
 				</script>
-			</div>
-		</div>
-		<div class="navbar navbar-fixed-bottom">
-			<div class="container">
-				<h3>this is a <a href="https://github.com/vadimkantorov/%s">%s</a> dashboard</h3>
 			</div>
 		</div>
 	</body>
