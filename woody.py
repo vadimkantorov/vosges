@@ -320,8 +320,8 @@ def html(e = None):
 
 					var stats_keys_reduced_experiment = ['name_code', 'time_updated', 'time_started', 'time_finished'];
 					var stats_keys_reduced_stage = ['time_wall_clock_avg_seconds'];
-					var stats_keys_reduced_job = ['exit_code', 'time_wall_clock_seconds'];
-					var environ_keys_reduced = ['USER', 'PWD', 'HOME', 'PATH', 'LD_LIBRARY_PATH'];
+					var stats_keys_reduced_job = ['exit_code', 'time_wall_clock_seconds', 'hostname', 'cuda_visible_devices', 'job_id'];
+					var environ_keys_reduced = ['USER', 'PWD', 'HOME', 'HOSTNAME', 'CUDA_VISIBLE_DEVICES', 'JOB_ID', 'PATH', 'LD_LIBRARY_PATH'];
 
 					var render_details = function(obj, ctx) {
 						$('#divDetails').html($('#tmplDetails').render(obj, ctx));
@@ -669,6 +669,8 @@ def gen(extra_env, force, locally):
 						'echo "' + qq(Magic.echo(Magic.Action.status, Experiment.ExecutionStatus.running)) + '" > "%s"' % job_stderr_path,
 						'echo "' + qq(Magic.echo(Magic.Action.stats, {'time_started' : "$(date +'%s')" % config.strftime})) + '" >> "%s"' % job_stderr_path,
 						'echo "' + qq(Magic.echo(Magic.Action.stats, {'hostname' : '$(hostname)'})) + '" >> "%s"' % job_stderr_path,
+						'echo "' + qq(Magic.echo(Magic.Action.stats, {'qstat_job_id' : '$JOB_ID'})) + '" >> "%s"' % job_stderr_path,
+						'echo "' + qq(Magic.echo(Magic.Action.stats, {'cuda_visible_devices' : '$CUDA_VISIBLE_DEVICES'})) + '" >> "%s"' % job_stderr_path,
 						'''python -c "import json, os; print('%s %s ' + json.dumps(dict(os.environ)))" >> "%s"''' % (Magic.prefix, Magic.Action.environ, job_stderr_path),
 						'''/usr/bin/time -f '%s %s {"exit_code" : %%x, "time_user_seconds" : %%U, "time_system_seconds" : %%S, "time_wall_clock_seconds" : %%e, "rss_max_kbytes" : %%M, "rss_avg_kbytes" : %%t, "page_faults_major" : %%F, "page_faults_minor" : %%R, "io_inputs" : %%I, "io_outputs" : %%O, "context_switches_voluntary" : %%w, "context_switches_involuntary" : %%c, "cpu_percentage" : "%%P", "signals_received" : %%k}' bash -e "%s" > "%s" 2>> "%s"''' % ((Magic.prefix.replace('%', '%%'), Magic.Action.stats, P.jobfile(stage.name, job_idx)) + P.joblogfiles(stage.name, job_idx)),
 						'''([ "$?" == "0" ] && (echo "%s") || (echo "%s")) >> "%s"''' % (qq(Magic.echo(Magic.Action.status, Experiment.ExecutionStatus.success)), qq(Magic.echo(Magic.Action.status, Experiment.ExecutionStatus.error)), job_stderr_path),
