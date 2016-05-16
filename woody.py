@@ -219,7 +219,7 @@ class Executable:
 		return [Path(str(self.script_path))]
 
 	def generate_bash_script_lines(self):
-		return ['%s "%s" %s' % (self.executor, self.switches, self.script_path, self.script_args)]
+		return ['%s %s "%s" %s' % (self.executor, self.switches, self.script_path, self.script_args)]
 
 class Magic:
 	prefix = '%' + config.tool_name
