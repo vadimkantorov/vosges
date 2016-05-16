@@ -26,7 +26,7 @@ class config:
 	sleep_between_queue_checks = 2.0
 	path = []
 	ld_library_path = []
-	source = None
+	source = []
 
 	queue = None
 	mem_lo_gb = 10.0
@@ -168,7 +168,7 @@ class Experiment:
 				(Experiment.ExecutionStatus.running, ) : (Experiment.ExecutionStatus.waiting, Experiment.ExecutionStatus.submitted, Experiment.ExecutionStatus.success),
 				(Experiment.ExecutionStatus.success, ) : (),
 				(Experiment.ExecutionStatus.error, Experiment.ExecutionStatus.killed) : None,
-				(Experiment.ExecutionStatus.canceled, ): ()
+				(Experiment.ExecutionStatus.canceled, ): (Experiment.ExecutionStatus.waiting, )
 			}
 
 			return [status[0] for status, extra_statuses in conditions.items() if any([job.status in status for job in self.jobs]) and (extra_statuses == None or all([job.status in status + extra_statuses for job in self.jobs]))][0]
@@ -195,7 +195,7 @@ class Experiment:
 	def path(self, *path_parts):
 		return Path(path_parts, env = {'EXPERIMENT_NAME' : self.name})
 
-	def stage(self, name, queue = None, parallel_jobs = None, batch_size = None, mem_lo_gb = None, mem_hi_gb = None, source = None, path = [], ld_library_path = []):
+	def stage(self, name, queue = None, parallel_jobs = None, batch_size = None, mem_lo_gb = None, mem_hi_gb = None, source = [], path = [], ld_library_path = []):
 		self.stages.append(Experiment.Stage(name, queue or config.queue, parallel_jobs or config.parallel_jobs, batch_size or config.batch_size, mem_lo_gb or config.mem_lo_gb, mem_hi_gb or config.mem_hi_gb, source or config.source, config.path + path, config.ld_library_path + ld_library_path))
 		return self.stages[-1]
 
@@ -205,16 +205,21 @@ class Experiment:
 		effective_stage.jobs.append(Experiment.Job(name, executable, env, cwd))
 		return effective_stage.jobs[-1]
 
-class bash:
-	def __init__(self, script_path, args = ''):
+	def bash(self, script_path, script_args = '', switches = ''):
+		return Executable('bash', switches, script_path, script_args)
+
+class Executable:
+	def __init__(self, executor, switches, script_path, script_args):
+		self.executor = executor
+		self.switches = switches
 		self.script_path = script_path
-		self.args = args
+		self.script_args = script_args
 
 	def get_used_paths(self):
 		return [Path(str(self.script_path))]
 
 	def generate_bash_script_lines(self):
-		return ['bash "%s" %s' % (self.script_path, self.args)]
+		return ['%s "%s" %s' % (self.executor, self.switches, self.script_path, self.script_args)]
 
 class Magic:
 	prefix = '%' + config.tool_name
@@ -646,7 +651,7 @@ def gen(extra_env, force, locally):
 	for p in [p for stage in e.stages for job in stage.jobs for p in job.get_used_paths() if p.domakedirs == True and not os.path.exists(str(p))]:
 		os.makedirs(str(p))
 	
-	generate_job_bash_script_lines = lambda stage, job, job_idx: ['# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, job.name, job_idx )] + map(lambda file_path: '''if [ ! -e "%s" ]; then echo 'File "%s" does not exist'; exit 1; fi''' % (file_path, file_path), job.get_used_paths()) + list(itertools.starmap('export {0}="{1}"'.format, sorted(job.env.items()))) + ['source "%s"' % stage.source if stage.source else '', 'export PATH="%s:$PATH"' % ':'.join(reversed(stage.path)) if stage.path else '', 'export LD_LIBRARY_PATH="%s:$LD_LIBRARY_PATH"' % ':'.join(reversed(stage.ld_library_path)) if stage.ld_library_path else '', 'cd "%s"' % job.cwd] + job.executable.generate_bash_script_lines()
+	generate_job_bash_script_lines = lambda stage, job, job_idx: ['# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, job.name, job_idx )] + map(lambda file_path: '''if [ ! -e "%s" ]; then echo 'File "%s" does not exist'; exit 1; fi''' % (file_path, file_path), job.get_used_paths()) + list(itertools.starmap('export {0}="{1}"'.format, sorted(job.env.items()))) + ['\n'.join(['source "%s"' % source for source in reversed(stage.source)]), 'export PATH="%s:$PATH"' % ':'.join(reversed(stage.path)) if stage.path else '', 'export LD_LIBRARY_PATH="%s:$LD_LIBRARY_PATH"' % ':'.join(reversed(stage.ld_library_path)) if stage.ld_library_path else '', 'cd "%s"' % job.cwd] + job.executable.generate_bash_script_lines()
 	
 	if locally:
 		with open(P.locally_generated_script, 'w') as f:
@@ -821,7 +826,8 @@ if __name__ == '__main__':
 	common_parent.add_argument('exp_py')
 
 	gen_parent = argparse.ArgumentParser(add_help = False)
-	add_config_fields(gen_parent, ['queue', 'mem_lo_gb', 'mem_hi_gb', ('parallel_jobs', 'p'), 'batch_size', 'source'])
+	add_config_fields(gen_parent, ['queue', 'mem_lo_gb', 'mem_hi_gb', ('parallel_jobs', 'p'), 'batch_size'])
+	gen_parent.add_argument('--source', action = 'append', default = [])
 	gen_parent.add_argument('--path', action = 'append', default = [])
 	gen_parent.add_argument('--ld_library_path', action = 'append', default = [])
 	
