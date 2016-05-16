@@ -214,7 +214,7 @@ class bash:
 		return [Path(str(self.script_path))]
 
 	def generate_bash_script_lines(self):
-		return [str(self.script_path) + ' ' + self.args]
+		return ['bash "%s" %s' % (self.script_path, self.args)]
 
 class Magic:
 	prefix = '%' + config.tool_name
@@ -359,7 +359,7 @@ def html(e = None):
 		<div class="container">
 			<div class="row">
 				<div class="col-sm-12 text-right">
-					<h3>this is a <a href="https://github.com/vadimkantorov/%s">%s</a> dashboard</h3>
+					<h4>this is a <a href="https://github.com/vadimkantorov/%s">%s</a> dashboard</h4>
 				</div>
 			</div>
 			<br />
