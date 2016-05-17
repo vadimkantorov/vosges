@@ -1,5 +1,9 @@
 #TODO: common env
-#TODO: show json decoding and other file errors in html log
+#TODO: show json decoding and other file errors in html log + qstat
+#TODO: a way to start jobs that have their dependencies completed
+#TODO: copy the report to target directory too
+#TODO: a way to define first,last stage non-interactively
+#TODO: a way to reduce number of parallel jobs
 
 import os
 import re
