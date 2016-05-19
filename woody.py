@@ -4,6 +4,9 @@
 #TODO: copy the report to target directory too
 #TODO: a way to define first,last stage non-interactively
 #TODO: a way to reduce number of parallel jobs
+#TODO: log command
+#TODO: check jobs for error reason    1:          05/18/2016 19:26:41 [0:136348]: exit_status of prolog = 1
+#TODO: make html generation only from log files
 
 import os
 import re
@@ -102,7 +105,8 @@ class Q:
 
 	@staticmethod
 	def delete_jobs(jobs):
-		subprocess.check_call(['qdel'] + map(str, jobs))
+		if jobs:
+			subprocess.check_call(['qdel'] + map(str, jobs))
 
 class Path:
 	def __init__(self, path_parts, env = {}, domakedirs = False, isoutput = False):
@@ -532,7 +536,8 @@ def html(e = None):
 		report_stage['stats']['time_wall_clock_avg_seconds'] = float(sum(wall_clock_seconds)) / len(wall_clock_seconds) if wall_clock_seconds else None
 		return report_stage
 
-	def augment_results(results):
+	def process_results(results):
+		processed_results = []
 		for i, r in enumerate(results):
 			if not isinstance(r, dict):
 				r = {'type' : 'text', 'path' : r}
@@ -540,8 +545,10 @@ def html(e = None):
 				r['name'] = os.path.basename(r['path'])
 			if r['type'] == 'text' and r.get('value') == None and r.get('path') != None:
 				r['value'] = P.read_or_empty(r['path'])
-			results[i] = r
-		return results
+			if r.get('name') == None:
+				r['name'] = '#' + i
+			processed_results = filter(lambda rr: rr['name'] != r['name'], processed_results) + [r]
+		return sorted(processed_results, key = lambda item: item['name'])
 
 	report = {
 		'name' : e.name, 
@@ -589,7 +596,7 @@ def html(e = None):
 				'status' : job.status, 
 				'environ' : exp_job_logs[job][1].environ(),
 				'env' : {k : str(v) for k, v in job.env.items()},
-				'results' : augment_results(exp_job_logs[job][1].results()),
+				'results' : process_results(exp_job_logs[job][1].results()),
 				'stats' : exp_job_logs[job][1].stats()
 			} for job_idx, job in enumerate(stage.jobs)] 
 		}) for stage in e.stages]
