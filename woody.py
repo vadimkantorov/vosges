@@ -1,4 +1,3 @@
-#TODO: common env
 #TODO: show json decoding and other file errors in html log + qstat
 #TODO: a way to start jobs that have their dependencies completed
 #TODO: copy the report to target directory too
@@ -34,6 +33,7 @@ class config:
 	path = []
 	ld_library_path = []
 	source = []
+	env = {}
 
 	queue = None
 	mem_lo_gb = 10.0
@@ -41,7 +41,12 @@ class config:
 	parallel_jobs = 4
 	batch_size = 1
 
-	items = staticmethod(lambda: [(k, v) for k, v in vars(config).items() if '__' not in k and k not in ['items', 'tool_name']])
+	items = staticmethod(lambda: [(k, v) for k, v in vars(config).items() if '__' not in k and k not in ['items', 'tool_name', 'update']])
+
+	@staticmethod
+	def update(**kwargs):
+		for k, v in kwargs.items():
+			setattr(config, k, v)
 
 class P:
 	jobdir = staticmethod(lambda stage_name: os.path.join(P.job, stage_name))
@@ -66,7 +71,8 @@ class P:
 		P.exp_py = exp_py
 		P.rcfile = os.path.abspath(rcfile)
 		P.locally_generated_script = os.path.abspath(os.path.basename(exp_py) + '.generated.sh')
-		P.experiment_name_code = os.path.basename(P.exp_py) + '_' + hashlib.md5(os.path.abspath(P.exp_py)).hexdigest()[:3].upper()
+		P.experiment_name = os.path.basename(P.exp_py)
+		P.experiment_name_code = P.experiment_name + '_' + hashlib.md5(os.path.abspath(P.exp_py)).hexdigest()[:3].upper()
 		
 		P.root = os.path.abspath(config.root)
 		P.html_root = config.html_root or os.path.join(P.root, 'html')
@@ -109,30 +115,53 @@ class Q:
 			subprocess.check_call(['qdel'] + map(str, jobs))
 
 class Path:
-	def __init__(self, path_parts, env = {}, domakedirs = False, isoutput = False):
+	def __init__(self, path_parts, domakedirs = False, isoutput = False):
 		path_parts = path_parts if isinstance(path_parts, tuple) else (path_parts, )
 		assert all([part != None for part in path_parts])
 	
 		self.string = os.path.join(*path_parts)
 		self.domakedirs = domakedirs
 		self.isoutput = isoutput
-		self.env = env
 
 	def join(self, *path_parts):
 		assert all([part != None for part in path_parts])
 
-		return Path(os.path.join(self.string, *map(str, path_parts)), env = self.env)
+		return Path(os.path.join(self.string, *map(str, path_parts)))
 
 	def makedirs(self):
-		return Path(self.string, domakedirs = True, isoutput = self.isoutput, env = self.env)
+		return Path(self.string, domakedirs = True, isoutput = self.isoutput)
 
 	def output(self):
-		return Path(self.string, domakedirs = self.domakedirs, isoutput = True, env = self.env)
+		return Path(self.string, domakedirs = self.domakedirs, isoutput = True)
 
 	def __str__(self):
-		return self.string.format(**self.env)
+		return self.string
 
 class Experiment:
+	def __init__(self, name, name_code):
+		self.name = name
+		self.name_code = name_code
+		self.stages = []
+	
+	def stage(self, name, queue = None, parallel_jobs = None, batch_size = None, mem_lo_gb = None, mem_hi_gb = None, source = [], path = [], ld_library_path = [], env = {}):
+		self.stages.append(Experiment.Stage(name, queue or config.queue, parallel_jobs or config.parallel_jobs, batch_size or config.batch_size, mem_lo_gb or config.mem_lo_gb, mem_hi_gb or config.mem_hi_gb, source or config.source, config.path + path, config.ld_library_path + ld_library_path, dict(config.env.items() + env.items())))
+		return self.stages[-1]
+
+	def run(self, executable, name = None, env = {}, cwd = Path(os.getcwd()), stage = None):
+		effective_stage = self.stages[-1] if stage == None else ([s for s in self.stages if s.name == stage] or [self.stage(stage)])[0]
+		name = '_'.join(map(str, name if isinstance(name, tuple) else (name,))) if name != None else str(len(effective_stage.jobs))
+		effective_stage.jobs.append(Experiment.Job(name, executable, dict(effective_stage.env.items() + env.items()), cwd))
+		return effective_stage.jobs[-1]
+	
+	def has_failed_stages(self):
+		return any([stage.calculate_aggregate_status() == Experiment.ExecutionStatus.error for stage in self.stages])
+
+	def bash(self, script_path, script_args = '', switches = ''):
+		return Executable('bash', switches, script_path, script_args)
+
+	def experiment_name(self):
+		return self.name
+
 	class ExecutionStatus:
 		waiting = 'waiting'
 		submitted = 'submitted'
@@ -186,35 +215,6 @@ class Experiment:
 
 		def calculate_job_range(self, batch_idx):
 			return range(batch_idx * self.batch_size, min(len(self.jobs), (batch_idx + 1) * self.batch_size))
-
-	def __init__(self, name, name_code, env):
-		self.name = name
-		self.name_code = name_code
-		self.stages = []
-		self.env = env
-	
-	def has_failed_stages(self):
-		return any([stage.calculate_aggregate_status() == Experiment.ExecutionStatus.error for stage in self.stages])
-
-	def config(self, **kwargs):
-		for k, v in kwargs.items():
-			setattr(config, k, v)
-
-	def path(self, *path_parts):
-		return Path(path_parts, env = {'EXPERIMENT_NAME' : self.name})
-
-	def stage(self, name, queue = None, parallel_jobs = None, batch_size = None, mem_lo_gb = None, mem_hi_gb = None, source = [], path = [], ld_library_path = []):
-		self.stages.append(Experiment.Stage(name, queue or config.queue, parallel_jobs or config.parallel_jobs, batch_size or config.batch_size, mem_lo_gb or config.mem_lo_gb, mem_hi_gb or config.mem_hi_gb, source or config.source, config.path + path, config.ld_library_path + ld_library_path))
-		return self.stages[-1]
-
-	def run(self, executable, name = None, env = {}, cwd = Path(os.getcwd()), stage = None):
-		effective_stage = self.stages[-1] if stage == None else ([s for s in self.stages if s.name == stage] or [self.stage(stage)])[0]
-		name = '_'.join(map(str, name if isinstance(name, tuple) else (name,))) if name != None else str(len(effective_stage.jobs))
-		effective_stage.jobs.append(Experiment.Job(name, executable, env, cwd))
-		return effective_stage.jobs[-1]
-
-	def bash(self, script_path, script_args = '', switches = ''):
-		return Executable('bash', switches, script_path, script_args)
 
 class Executable:
 	def __init__(self, executor, switches, script_path, script_args):
@@ -561,7 +561,7 @@ def html(e = None):
 		'rcfile' : P.read_or_empty(P.rcfile) if P.rcfile != None else None,
 		'rcfile_path' : P.rcfile,
 		'environ' : exp_job_logs[e][1].environ(),
-		'env' : e.env,
+		'env' : config.env,
 		'stats' : merge_dicts([{
 			'time_updated' : time.strftime(config.strftime), 
 			'experiment_root' : P.experiment_root,
@@ -617,14 +617,9 @@ def stop():
 		time.sleep(config.sleep_between_queue_checks)
 	print 'Done.\n'
 	
-
-def init(extra_env = []):
-	extra_env = dict([k_eq_v.split('=') for k_eq_v in extra_env])
-	for k, v in extra_env.items():
-		os.environ[k] = v
-
+def init():
 	globals_mod = globals().copy()
-	e = Experiment(os.path.basename(P.exp_py), P.experiment_name_code, extra_env)
+	e = Experiment(os.path.basename(P.exp_py), P.experiment_name_code)
 	globals_mod.update({m : getattr(e, m) for m in dir(e)})
 	exec open(P.exp_py, 'r').read() in globals_mod, globals_mod
 
@@ -642,7 +637,7 @@ def init(extra_env = []):
 	
 	return e
 
-def gen(extra_env, force, locally):
+def gen(force, locally):
 	if not locally and len(Q.get_jobs(P.experiment_name_code)) > 0:
 		if force == False:
 			print 'Please stop existing jobs for this experiment first. Add --force to the previous command or type:'
@@ -656,7 +651,7 @@ def gen(extra_env, force, locally):
 	if not locally:
 		clean()
 	
-	e = init(extra_env)
+	e = init()
 
 	print '%-30s %s' % ('Generating the experiment to:', P.locally_generated_script if locally else P.experiment_root)
 	for p in [p for stage in e.stages for job in stage.jobs for p in job.get_used_paths() if p.domakedirs == True and not os.path.exists(str(p))]:
@@ -710,8 +705,8 @@ def gen(extra_env, force, locally):
 					]))
 	return e
 
-def run(extra_env, force, dry, verbose, notify):
-	e = gen(extra_env, force, False)
+def run(force, dry, verbose, notify):
+	e = gen(force, False)
 
 	print '%-30s %s' % ('Report will be at:', P.html_report_link)
 	print ''
@@ -846,7 +841,7 @@ if __name__ == '__main__':
 	add_config_fields(run_parent, ['notification_command_on_error', 'notification_command_on_success', 'strftime', 'max_stdout_size', 'sleep_between_queue_checks'])
 	
 	gen_run_parent = argparse.ArgumentParser(add_help = False)
-	gen_run_parent.add_argument('-v', dest = 'extra_env', action = 'append', default = [])
+	gen_run_parent.add_argument('-v', dest = 'env', action = 'append', default = [])
 	gen_run_parent.add_argument('--force', action = 'store_true')
 
 	parser = argparse.ArgumentParser(parents = [run_parent, gen_parent])
@@ -882,6 +877,7 @@ if __name__ == '__main__':
 			else:
 				setattr(config, k, arg)
 
+	config.env = dict([k_eq_v.split('=') for k_eq_v in args.pop('env')])
 	P.init(args.pop('exp_py'), rcfile)
 	try:
 		cmd(**args)
