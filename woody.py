@@ -583,6 +583,7 @@ def html(e = None):
 			'stdout_path' : '\n'.join(sgejoblog_paths(stage, 0)),
 			'stderr' : sgejoblog(stage, 1), 
 			'stderr_path' : '\n'.join(sgejoblog_paths(stage, 1)),
+			'env' : stage.env,
 			'script' : sgejobscript(stage),
 			'status' : stage.calculate_aggregate_status(), 
 			'stats' : {
@@ -599,7 +600,7 @@ def html(e = None):
 				'script_path' : P.jobfile(stage.name, job_idx),
 				'status' : job.status, 
 				'environ' : exp_job_logs[job][1].environ(),
-				'env' : {k : str(v) for k, v in job.env.items()},
+				'env' : job.env,
 				'results' : process_results(exp_job_logs[job][1].results()),
 				'stats' : exp_job_logs[job][1].stats()
 			} for job_idx, job in enumerate(stage.jobs)] 
@@ -607,7 +608,7 @@ def html(e = None):
 	}
 
 	with open(P.html_report, 'w') as f:
-		f.write(HTML_PATTERN % (e.name_code, json.dumps(report, default = lambda obj: str(obj)), config.tool_name, config.tool_name))
+		f.write(HTML_PATTERN % (e.name_code, json.dumps(report, default = str), config.tool_name, config.tool_name))
 
 def clean():
 	if os.path.exists(P.experiment_root):
