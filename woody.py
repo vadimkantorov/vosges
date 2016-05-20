@@ -801,7 +801,7 @@ def run(force, dry, verbose, notify):
 				cmd = config.notification_command_on_error.format(NAME_CODE = e.name_code, HTML_REPORT_LINK = P.html_report_link, FAILED_STAGE = stage.name, FAILED_JOB = [job.name for job in stage.jobs if job.has_failed()][0])
 				print >> sys.stderr.verbose(), 'Command: %s' % cmd
 				print '\nExit code: %d' % subprocess.call(cmd, shell = True, stdout = sys.stderr.diskfile, stderr = sys.stderr.diskfile)
-			print '\nStopping the experiment. Skipped stages: %s' % ','.join([e.stages[si].name for si in range(stage_idx + 1, len(e.stages))])
+			print '\nStopping the experiment. Skipped stages: %s' % ', '.join([e.stages[si].name for si in range(stage_idx + 1, len(e.stages))])
 			break
 		else:
 			print '[ok, elapsed %s]' % elapsed
@@ -869,15 +869,17 @@ if __name__ == '__main__':
 	if os.path.exists(rcfile):
 		exec open(rcfile).read() in globals(), globals()
 
+	args['env'] = dict([k_eq_v.split('=') for k_eq_v in args['env']])
 	for k, v in config.items():
 		arg = args.pop(k)
 		if arg != None:
 			if isinstance(arg, list):
 				setattr(config, k, getattr(config, k) + arg)
+			elif isinstance(arg, dict):
+				setattr(config, k, dict(getattr(config, k).items() + arg.items()))
 			else:
 				setattr(config, k, arg)
 
-	config.env = dict([k_eq_v.split('=') for k_eq_v in args.pop('env')])
 	P.init(args.pop('exp_py'), rcfile)
 	try:
 		cmd(**args)
