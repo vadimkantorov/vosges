@@ -162,6 +162,9 @@ class Experiment:
 	def experiment_name(self):
 		return self.name
 
+	def path(self, *path_parts):
+		return Path(*parth_parts)
+
 	class ExecutionStatus:
 		waiting = 'waiting'
 		submitted = 'submitted'
