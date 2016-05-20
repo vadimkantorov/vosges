@@ -163,7 +163,7 @@ class Experiment:
 		return self.name
 
 	def path(self, *path_parts):
-		return Path(*parth_parts)
+		return Path(*path_parts)
 
 	class ExecutionStatus:
 		waiting = 'waiting'
@@ -189,7 +189,7 @@ class Experiment:
 			return self.status == Experiment.ExecutionStatus.error or self.status == Experiment.ExecutionStatus.killed
 	
 	class Stage:
-		def __init__(self, name, queue, parallel_jobs, batch_size, mem_lo_gb, mem_hi_gb, source, path, ld_library_path):
+		def __init__(self, name, queue, parallel_jobs, batch_size, mem_lo_gb, mem_hi_gb, source, path, ld_library_path, env):
 			self.name = name
 			self.queue = queue
 			self.parallel_jobs = parallel_jobs
@@ -199,6 +199,7 @@ class Experiment:
 			self.source = source
 			self.path = path
 			self.ld_library_path = ld_library_path
+			self.env = env
 			self.jobs = []
 
 		def calculate_aggregate_status(self):
@@ -606,7 +607,7 @@ def html(e = None):
 	}
 
 	with open(P.html_report, 'w') as f:
-		f.write(HTML_PATTERN % (e.name_code, json.dumps(report), config.tool_name, config.tool_name))
+		f.write(HTML_PATTERN % (e.name_code, json.dumps(report, default = lambda obj: str(obj)), config.tool_name, config.tool_name))
 
 def clean():
 	if os.path.exists(P.experiment_root):
