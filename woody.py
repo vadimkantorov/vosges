@@ -164,7 +164,7 @@ class Experiment:
 		return self.name
 
 	def path(self, *path_parts):
-		return Path(*path_parts)
+		return Path(path_parts)
 
 	class ExecutionStatus:
 		waiting = 'waiting'
