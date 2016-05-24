@@ -7,6 +7,9 @@
 #TODO: check jobs for error reason    1:          05/18/2016 19:26:41 [0:136348]: exit_status of prolog = 1
 #TODO: make html generation only from log files
 #TODO: make wall_clock_seconds output current time + hide hostname, cuda_visible_devices, qstat_job_id etc
+#TODO woody path command
+#TODO woody job command
+#TODO: woody resume command
 
 import os
 import re
@@ -875,7 +878,7 @@ if __name__ == '__main__':
 	if os.path.exists(rcfile):
 		exec open(rcfile).read() in globals(), globals()
 
-	args['env'] = dict([k_eq_v.split('=') for k_eq_v in args['env']])
+	args['env'] = dict([k_eq_v.split('=') for k_eq_v in args.pop('env', {})])
 	for k, v in config.items():
 		arg = args.pop(k)
 		if arg != None:
