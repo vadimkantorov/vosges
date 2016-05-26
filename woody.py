@@ -100,7 +100,7 @@ class Q:
 					res = f(*args, **kwargs)
 					return res
 				except subprocess.CalledProcessError, err:
-					print >> sys.stderr, '\nRetrying. Got CalledProcessError while calling %s:' % f, err.output
+					print >> sys.stderr, '\nRetrying. Got CalledProcessError while calling %s:\nreturncode: %d\ncmd: %s\noutput: %s\n\n' % (f, err.returncode, err.cmd, err.output)
 					time.sleep(config.sleep_between_queue_checks)
 					continue
 		return safe_f
@@ -760,7 +760,13 @@ def run(force, dry, verbose, notify):
 		job.status = status
 		
 	def update_status(stage, new_status = None):
-		active_jobs = [job for sgejob in Q.get_jobs(e.name_code) for job in sgejob2job[sgejob]]
+		try:
+			active_jobs = [job for sgejob in Q.get_jobs(e.name_code) for job in sgejob2job[sgejob]]
+		except KeyError, err:
+			print err
+			print sgejob2job
+			sys.exit(1)
+			
 		for job_idx, job in enumerate(stage.jobs):
 			if new_status:
 				put_status(stage, job, new_status)
