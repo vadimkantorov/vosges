@@ -7,9 +7,10 @@
 #TODO: check jobs for error reason    1:          05/18/2016 19:26:41 [0:136348]: exit_status of prolog = 1
 #TODO: make html generation only from log files
 #TODO: make wall_clock_seconds output current time + hide hostname, cuda_visible_devices, qstat_job_id etc
-#TODO woody path command
-#TODO woody job command
+#TODO: woody path command
+#TODO: woody job command
 #TODO: woody resume command
+#TODO: link in modal
 
 import os
 import re
@@ -97,8 +98,7 @@ class Q:
 		def safe_f(*args, **kwargs):
 			while True:
 				try:
-					res = f(*args, **kwargs)
-					return res
+					return f(*args, **kwargs)
 				except subprocess.CalledProcessError, err:
 					print >> sys.stderr, '\nRetrying. Got CalledProcessError while calling %s:\nreturncode: %d\ncmd: %s\noutput: %s\n\n' % (f, err.returncode, err.cmd, err.output)
 					time.sleep(config.sleep_between_queue_checks)
@@ -209,7 +209,7 @@ class Experiment:
 		def calculate_aggregate_status(self):
 			conditions = {
 				(Experiment.ExecutionStatus.waiting, ) : (),
-				(Experiment.ExecutionStatus.submitted, ) : (Experiment.ExecutionStatus.waiting, ),
+				(Experiment.ExecutionStatus.submitted, ) : (Experiment.ExecutionStatus.waiting, Experiment.ExecutionStatus.success),
 				(Experiment.ExecutionStatus.running, ) : (Experiment.ExecutionStatus.waiting, Experiment.ExecutionStatus.submitted, Experiment.ExecutionStatus.success),
 				(Experiment.ExecutionStatus.success, ) : (),
 				(Experiment.ExecutionStatus.error, Experiment.ExecutionStatus.killed) : None,
@@ -815,7 +815,7 @@ def run(force, dry, verbose, notify):
 				print 'Executing custom notification_command_on_error.'
 				cmd = config.notification_command_on_error.format(NAME_CODE = e.name_code, HTML_REPORT_LINK = P.html_report_link, FAILED_STAGE = stage.name, FAILED_JOB = [job.name for job in stage.jobs if job.has_failed()][0])
 				print >> sys.stderr.verbose(), 'Command: %s' % cmd
-				print '\nExit code: %d' % subprocess.call(cmd, shell = True, stdout = sys.stderr.diskfile, stderr = sys.stderr.diskfile)
+				print 'Exit code: %d' % subprocess.call(cmd, shell = True, stdout = sys.stderr.diskfile, stderr = sys.stderr.diskfile)
 			print '\nStopping the experiment. Skipped stages: %s' % ', '.join([e.stages[si].name for si in range(stage_idx + 1, len(e.stages))])
 			break
 		else:
