@@ -344,7 +344,7 @@ def html(e = None):
 
 					var stats_keys_reduced_experiment = ['name_code', 'time_updated', 'time_started', 'time_finished'];
 					var stats_keys_reduced_stage = ['time_wall_clock_avg_seconds'];
-					var stats_keys_reduced_job = ['exit_code', 'time_wall_clock_seconds', 'hostname', 'cuda_visible_devices', 'qstat_job_id'];
+					var stats_keys_reduced_job = ['exit_code', 'time_wall_clock_seconds'];
 					var environ_keys_reduced = ['USER', 'PWD', 'HOME', 'HOSTNAME', 'CUDA_VISIBLE_DEVICES', 'JOB_ID', 'PATH', 'LD_LIBRARY_PATH'];
 
 					var render_details = function(obj, ctx) {
