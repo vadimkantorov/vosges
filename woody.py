@@ -11,7 +11,7 @@
 #TODO: woody job command
 #TODO: woody resume command
 #TODO: link in modal
-#TODO: guard against low disk
+#TODO: guard against low disk, resilient Magic operation
 
 import os
 import re
