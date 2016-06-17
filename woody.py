@@ -1,18 +1,3 @@
-#TODO: show json decoding and other file errors in html log + qstat
-#TODO: a way to start jobs that have their dependencies completed
-#TODO: copy the report to target directory too
-#TODO: a way to define first,last stage non-interactively
-#TODO: a way to reduce number of parallel jobs
-#TODO: log command
-#TODO: check jobs for error reason    1:          05/18/2016 19:26:41 [0:136348]: exit_status of prolog = 1
-#TODO: make html generation only from log files
-#TODO: make wall_clock_seconds output current time + hide hostname, cuda_visible_devices, qstat_job_id etc
-#TODO: woody path command
-#TODO: woody job command
-#TODO: woody resume command
-#TODO: link in modal
-#TODO: guard against low disk, resilient Magic operation
-
 import os
 import re
 import sys
@@ -761,13 +746,7 @@ def run(force, dry, verbose, notify):
 		job.status = status
 		
 	def update_status(stage, new_status = None):
-		try:
-			active_jobs = [job for sgejob in Q.get_jobs(e.name_code) for job in sgejob2job[sgejob]]
-		except KeyError, err:
-			print err
-			print sgejob2job
-			sys.exit(1)
-			
+		active_jobs = [job for sgejob in Q.get_jobs(e.name_code) for job in sgejob2job[sgejob]]
 		for job_idx, job in enumerate(stage.jobs):
 			if new_status:
 				put_status(stage, job, new_status)
@@ -800,6 +779,13 @@ def run(force, dry, verbose, notify):
 			wait_if_more_jobs_than(stage, stage.parallel_jobs - 1)
 			sgejob = Q.submit_job(P.sgejobfile(stage.name, sgejob_idx))
 			sgejob2job[sgejob] = [stage.jobs[job_idx] for job_idx in stage.calculate_job_range(sgejob_idx)]
+
+			not_in_sgejob2job = [x for x in Q.get_jobs(e.name_code) if x not in sgejob2job]
+			if not_in_sgejob2job:
+				print 'Just submitted %s' % sgejob
+				print 'Not in sgejob2job: %s' % not_in_sgejob2job
+				sys.exit(1)
+
 			for job_idx in stage.calculate_job_range(sgejob_idx):
 				stage.jobs[job_idx].status = Experiment.ExecutionStatus.submitted
 

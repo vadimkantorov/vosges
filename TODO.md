@@ -1,0 +1,14 @@
+- show json decoding and other file errors in html log + qstat
+- a way to start jobs that have their dependencies completed
+- copy the report to target directory too
+- a way to define first,last stage non-interactively
+- a way to reduce number of parallel jobs
+- log command
+- check jobs for error reason    1:          05/18/2016 19:26:41 [0:136348]: exit_status of prolog = 1
+- make html generation only from log files
+- make wall_clock_seconds output current time + hide hostname, cuda_visible_devices, qstat_job_id etc
+- woody path command
+- woody job command
+- woody resume command
+- link in modal
+- guard against low disk, resilient Magic operation
