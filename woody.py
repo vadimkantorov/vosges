@@ -780,10 +780,12 @@ def run(force, dry, verbose, notify):
 			sgejob = Q.submit_job(P.sgejobfile(stage.name, sgejob_idx))
 			sgejob2job[sgejob] = [stage.jobs[job_idx] for job_idx in stage.calculate_job_range(sgejob_idx)]
 
-			not_in_sgejob2job = [x for x in Q.get_jobs(e.name_code) if x not in sgejob2job]
+			Q_get_jobs = Q.get_jobs(e.name_code)
+			not_in_sgejob2job = [x for x in Q_get_jobs if x not in sgejob2job]
 			if not_in_sgejob2job:
 				print 'Just submitted %s' % sgejob
 				print 'Not in sgejob2job: %s' % not_in_sgejob2job
+				print 'Just submitted in Q_get_jobs: %s' % (sgejob in Q_get_jobs)
 				sys.exit(1)
 
 			for job_idx in stage.calculate_job_range(sgejob_idx):
