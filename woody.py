@@ -778,12 +778,12 @@ def run(force, dry, verbose, notify):
 		for sgejob_idx in range(stage.job_batch_count()):
 			wait_if_more_jobs_than(stage, stage.parallel_jobs - 1)
 			sgejob = Q.submit_job(P.sgejobfile(stage.name, sgejob_idx))
+			print 'Just submitted %s' % sgejob
 			sgejob2job[sgejob] = [stage.jobs[job_idx] for job_idx in stage.calculate_job_range(sgejob_idx)]
 
 			Q_get_jobs = Q.get_jobs(e.name_code)
 			not_in_sgejob2job = [x for x in Q_get_jobs if x not in sgejob2job]
 			if not_in_sgejob2job:
-				print 'Just submitted %s' % sgejob
 				print 'Not in sgejob2job: %s' % not_in_sgejob2job
 				print 'Just submitted in Q_get_jobs: %s' % (sgejob in Q_get_jobs)
 				sys.exit(1)
