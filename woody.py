@@ -784,6 +784,7 @@ def run(force, dry, verbose, notify):
 			Q_get_jobs = Q.get_jobs(e.name_code)
 			not_in_sgejob2job = [x for x in Q_get_jobs if x not in sgejob2job]
 			if not_in_sgejob2job:
+				print subprocess.check_output(['qstat'])
 				print 'Not in sgejob2job: %s' % not_in_sgejob2job
 				print 'Just submitted in Q_get_jobs: %s' % (sgejob in Q_get_jobs)
 				sys.exit(1)
