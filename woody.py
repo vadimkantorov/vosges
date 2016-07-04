@@ -96,12 +96,12 @@ class Q:
 		return [int(elem.getElementsByTagName('JB_job_number')[0].firstChild.data) for elem in xml.dom.minidom.parseString(Q.retry(subprocess.check_output)(['qstat', '-xml'])).documentElement.getElementsByTagName('job_list') if elem.getElementsByTagName('JB_name')[0].firstChild.data.startswith(job_name_prefix) and elem.getElementsByTagName('state')[0].firstChild.data.startswith(state)]
 	
 	@staticmethod
-	def submit_job(sgejob_file, job_name):
+	def submit_job(sgejob_file, sgejob_name):
 		while True:
 			try:
-				return int(subprocess.check_output(['qsub', '-N', job_name, '-terse', sgejob_file]))
+				return int(subprocess.check_output(['qsub', '-N', sgejob_name, '-terse', sgejob_file]))
 			except subprocess.CalledProcessError, err:
-				jobs = Q.get_jobs(job_name)
+				jobs = Q.get_jobs(sgejob_name)
 				if len(jobs) == 1:
 					return jobs[0]
 
