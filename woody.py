@@ -96,13 +96,19 @@ class Q:
 		return [int(elem.getElementsByTagName('JB_job_number')[0].firstChild.data) for elem in xml.dom.minidom.parseString(Q.retry(subprocess.check_output)(['qstat', '-xml'])).documentElement.getElementsByTagName('job_list') if elem.getElementsByTagName('JB_name')[0].firstChild.data.startswith(job_name_prefix) and elem.getElementsByTagName('state')[0].firstChild.data.startswith(state)]
 	
 	@staticmethod
-	def submit_job(sgejob_file):
-		return int(Q.retry(subprocess.check_output)(['qsub', '-terse', sgejob_file]))
+	def submit_job(sgejob_file, job_name):
+		while True:
+			try:
+				return int(subprocess.check_output(['qsub', '-N', job_name, '-terse', sgejob_file]))
+			except subprocess.CalledProcessError, err:
+				jobs = Q.get_jobs(job_name)
+				if len(jobs) == 1:
+					return jobs[0]
 
 	@staticmethod
 	def delete_jobs(jobs):
 		if jobs:
-			subprocess.check_call(['qdel'] + map(str, jobs))
+			Q.retry(subprocess.check_call)(['qdel'] + map(str, jobs))
 
 class Path:
 	def __init__(self, path_parts, domakedirs = False, isoutput = False):
@@ -673,7 +679,6 @@ def gen(force, locally):
 		for sgejob_idx in range(stage.job_batch_count()):
 			with open(P.sgejobfile(stage.name, sgejob_idx), 'w') as f:
 				f.write('\n'.join([
-					'#$ -N %s_%s' % (e.name_code, stage.name),
 					'#$ -S /bin/bash',
 					'#$ -l mem_req=%.2fG' % stage.mem_lo_gb,
 					'#$ -l h_vmem=%.2fG' % stage.mem_hi_gb,
@@ -777,16 +782,8 @@ def run(force, dry, verbose, notify):
 		sys.stdout.write('%-30s ' % ('%s (%d jobs)' % (stage.name, len(stage.jobs))))
 		for sgejob_idx in range(stage.job_batch_count()):
 			wait_if_more_jobs_than(stage, stage.parallel_jobs - 1)
-			sgejob = Q.submit_job(P.sgejobfile(stage.name, sgejob_idx))
+			sgejob = Q.submit_job(P.sgejobfile(stage.name, sgejob_idx), '%s_%s_%d' % (e.name_code, stage.name, stagejob_idx))
 			sgejob2job[sgejob] = [stage.jobs[job_idx] for job_idx in stage.calculate_job_range(sgejob_idx)]
-
-			Q_get_jobs = Q.get_jobs(e.name_code)
-			not_in_sgejob2job = [x for x in Q_get_jobs if x not in sgejob2job]
-			if not_in_sgejob2job:
-				print subprocess.check_output(['qstat'])
-				print 'Not in sgejob2job: %s' % not_in_sgejob2job
-				print 'Just submitted in Q_get_jobs: %s' % (sgejob in Q_get_jobs)
-				sys.exit(1)
 
 			for job_idx in stage.calculate_job_range(sgejob_idx):
 				stage.jobs[job_idx].status = Experiment.ExecutionStatus.submitted

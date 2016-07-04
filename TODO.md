@@ -6,7 +6,7 @@
 - log command
 - check jobs for error reason    1:          05/18/2016 19:26:41 [0:136348]: exit_status of prolog = 1
 - make html generation only from log files
-- make wall_clock_seconds output current time + hide hostname, cuda_visible_devices, qstat_job_id etc
+- make wall_clock_seconds output current time
 - woody path command
 - woody job command
 - woody resume command
