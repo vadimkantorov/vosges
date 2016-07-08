@@ -782,7 +782,7 @@ def run(force, dry, verbose, notify):
 		sys.stdout.write('%-30s ' % ('%s (%d jobs)' % (stage.name, len(stage.jobs))))
 		for sgejob_idx in range(stage.job_batch_count()):
 			wait_if_more_jobs_than(stage, stage.parallel_jobs - 1)
-			sgejob = Q.submit_job(P.sgejobfile(stage.name, sgejob_idx), '%s_%s_%d' % (e.name_code, stage.name, stagejob_idx))
+			sgejob = Q.submit_job(P.sgejobfile(stage.name, sgejob_idx), '%s_%s_%d' % (e.name_code, stage.name, sgejob_idx))
 			sgejob2job[sgejob] = [stage.jobs[job_idx] for job_idx in stage.calculate_job_range(sgejob_idx)]
 
 			for job_idx in stage.calculate_job_range(sgejob_idx):
