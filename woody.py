@@ -92,23 +92,23 @@ class Q:
 		return safe_f
 
 	@staticmethod
-	def get_jobs(job_name_prefix, state = ''):
-		return [int(elem.getElementsByTagName('JB_job_number')[0].firstChild.data) for elem in xml.dom.minidom.parseString(Q.retry(subprocess.check_output)(['qstat', '-xml'])).documentElement.getElementsByTagName('job_list') if elem.getElementsByTagName('JB_name')[0].firstChild.data.startswith(job_name_prefix) and elem.getElementsByTagName('state')[0].firstChild.data.startswith(state)]
+	def get_jobs(job_name_prefix, state = '', stderr = None):
+		return [int(elem.getElementsByTagName('JB_job_number')[0].firstChild.data) for elem in xml.dom.minidom.parseString(Q.retry(subprocess.check_output)(['qstat', '-xml'], stderr = stderr)).documentElement.getElementsByTagName('job_list') if elem.getElementsByTagName('JB_name')[0].firstChild.data.startswith(job_name_prefix) and elem.getElementsByTagName('state')[0].firstChild.data.startswith(state)]
 	
 	@staticmethod
-	def submit_job(sgejob_file, sgejob_name):
+	def submit_job(sgejob_file, sgejob_name, stderr = None):
 		while True:
 			try:
-				return int(subprocess.check_output(['qsub', '-N', sgejob_name, '-terse', sgejob_file]))
+				return int(subprocess.check_output(['qsub', '-N', sgejob_name, '-terse', sgejob_file], stderr = stderr))
 			except subprocess.CalledProcessError, err:
-				jobs = Q.get_jobs(sgejob_name)
+				jobs = Q.get_jobs(sgejob_name, stderr = stderr)
 				if len(jobs) == 1:
 					return jobs[0]
 
 	@staticmethod
-	def delete_jobs(jobs):
+	def delete_jobs(jobs, stderr = None):
 		if jobs:
-			Q.retry(subprocess.check_call)(['qdel'] + map(str, jobs))
+			Q.retry(subprocess.check_call)(['qdel'] + map(str, jobs), stdout = stderr, stderr = stderr)
 
 class Path:
 	def __init__(self, path_parts, domakedirs = False, isoutput = False):
