@@ -484,7 +484,7 @@ def html(e = None):
 								<h4 class="modal-title">{{>~name}}</h4>
 							</div>
 							<div class="modal-body">
-								<p>path:&nbsp;{{if ~path}}<a href="{{:~path}}">{{>~path}}</a>{{else}}no path provided{{/if}}</p>
+								<p><strong>path:</strong>&nbsp;{{if ~path}}{{>~path}}{{else}}no path provided{{/if}}</p>
 								{{if ~type == 'text'}}
 								<pre class="full-screen">{{>~value}}</pre>
 								{{else ~type == 'iframe'}}
