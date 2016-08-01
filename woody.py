@@ -334,7 +334,7 @@ def html(e = None):
 					var groups = re.exec(window.location.hash);
 					var stage_name = groups[1], job_name = groups[2];
 
-					var stats_keys_reduced_experiment = ['name_code', 'time_updated', 'time_started', 'time_finished'];
+					var stats_keys_reduced_experiment = ['name_code', 'time_started', 'time_finished'];
 					var stats_keys_reduced_stage = ['time_wall_clock_avg_seconds'];
 					var stats_keys_reduced_job = ['exit_code', 'time_wall_clock_seconds'];
 					var environ_keys_reduced = ['USER', 'PWD', 'HOME', 'HOSTNAME', 'CUDA_VISIBLE_DEVICES', 'JOB_ID', 'PATH', 'LD_LIBRARY_PATH'];
@@ -345,6 +345,7 @@ def html(e = None):
 					};
 			
 					$('#divExp').html($('#tmplExp').render(report));
+					$('#lnkExpName').html(report.name);
 					for(var i = 0; i < report.stages.length; i++)
 					{
 						if('#' + report.stages[i].name == stage_name)
@@ -354,12 +355,12 @@ def html(e = None):
 							{
 								if('/' + report.stages[i].jobs[j].name == job_name)
 								{
-									render_details(report.stages[i].jobs[j], {header : {text : report.stages[i].jobs[j].name, href : '#' + stage_name + '/' + job_name}, stats_keys_reduced : stats_keys_reduced_job, environ_keys_reduced : environ_keys_reduced});
+									render_details(report.stages[i].jobs[j], {header : {text : '/' + stage_name + '/' + report.stages[i].jobs[j].name, href : '#' + stage_name + '/' + job_name}, stats_keys_reduced : stats_keys_reduced_job, environ_keys_reduced : environ_keys_reduced});
 									return;
 								}
 							}
 
-							render_details(report.stages[i], {stats_keys_reduced : stats_keys_reduced_stage, environ_keys_reduced : environ_keys_reduced});
+							render_details(report.stages[i], {header : {text : '/' + stage_name, href : '#' + stage_name}stats_keys_reduced : stats_keys_reduced_stage, environ_keys_reduced : environ_keys_reduced});
 							return;
 						}
 					}
@@ -371,15 +372,19 @@ def html(e = None):
 		</script>
 		<div class="container">
 			<div class="row">
-				<div class="col-sm-12 text-right">
+				<div class="col-sm-8">
+					<h1><a href="#" id="experimentNameLink"></a></h1>
+				</div>
+				<div class="col-sm-4 text-right">
 					<h4>this is a <a href="https://github.com/vadimkantorov/%s">%s</a> dashboard</h4>
+					<h5>updated at {{>stats.time_updated}}</h5>
 				</div>
 			</div>
 			<br />
 			<div class="row">
 				<div class="col-sm-4 experiment-pane" id="divExp"></div>
 				<script type="text/x-jsrender" id="tmplExp">
-					<h1><a href="#">{{>name}}</a></h1>
+					<h1></h1>
 					<h3>stages</h3>
 					<table class="table table-bordered">
 						<thead>
@@ -399,7 +404,7 @@ def html(e = None):
 
 				<div class="col-sm-4 experiment-pane" id="divJobs"></div>
 				<script type="text/x-jsrender" id="tmplJobs">
-					<h1><a href="#{{>name}}">{{>name}}</a></h1>
+					<h1></h1>
 					<h3>jobs</h3>
 					<table class="table table-bordered">
 						<thead>
@@ -612,11 +617,11 @@ def clean():
 	if os.path.exists(P.experiment_root):
 		shutil.rmtree(P.experiment_root)
 
-def stop():
+def stop(stderr = None):
 	print 'Stopping the experiment "%s"...' % P.experiment_name_code
-	Q.delete_jobs(Q.get_jobs(P.experiment_name_code))
-	while len(Q.get_jobs(P.experiment_name_code)) > 0:
-		print '%d jobs are still not deleted. Sleeping...' % len(Q.get_jobs(P.experiment_name_code))
+	Q.delete_jobs(Q.get_jobs(P.experiment_name_code, stderr = stderr), stderr = stderr)
+	while len(Q.get_jobs(P.experiment_name_code), stderr = stderr) > 0:
+		print '%d jobs are still not deleted. Sleeping...' % len(Q.get_jobs(P.experiment_name_code, stderr = stderr))
 		time.sleep(config.sleep_between_queue_checks)
 	print 'Done.\n'
 	
@@ -735,6 +740,9 @@ def run(force, dry, verbose, notify):
 			self.diskfile.flush()
 			for stream in self.dup:
 				stream.flush()
+		
+		def fp(self):
+			return self.diskfile
 
 		def nodup(self):
 			return Tee(self.diskfile, [])
@@ -753,7 +761,7 @@ def run(force, dry, verbose, notify):
 		job.status = status
 		
 	def update_status(stage, new_status = None):
-		active_jobs = [job for sgejob in Q.get_jobs(e.name_code) for job in sgejob2job[sgejob]]
+		active_jobs = [job for sgejob in Q.get_jobs(e.name_code, stderr = sys.stderr.fp()) for job in sgejob2job[sgejob]]
 		for job_idx, job in enumerate(stage.jobs):
 			if new_status:
 				put_status(stage, job, new_status)
@@ -764,8 +772,8 @@ def run(force, dry, verbose, notify):
 
 	def wait_if_more_jobs_than(stage, num_jobs):
 		prev_msg = None
-		while len(Q.get_jobs(e.name_code)) > num_jobs:
-			msg = 'Running %d jobs, waiting %d jobs.' % (len(Q.get_jobs(e.name_code, 'r')), len(Q.get_jobs(e.name_code, 'qw')))
+		while len(Q.get_jobs(e.name_code, stderr = sys.stderr.fp())) > num_jobs:
+			msg = 'Running %d jobs, waiting %d jobs.' % (len(Q.get_jobs(e.name_code, 'r', stderr = sys.stderr.fp())), len(Q.get_jobs(e.name_code, 'qw', stderr = sys.stderr.fp())))
 			if msg != prev_msg:
 				print >> sys.stderr.verbose(), msg
 				prev_msg = msg
@@ -784,7 +792,7 @@ def run(force, dry, verbose, notify):
 		sys.stdout.write('%-30s ' % ('%s (%d jobs)' % (stage.name, len(stage.jobs))))
 		for sgejob_idx in range(stage.job_batch_count()):
 			wait_if_more_jobs_than(stage, stage.parallel_jobs - 1)
-			sgejob = Q.submit_job(P.sgejobfile(stage.name, sgejob_idx), '%s_%s_%d' % (e.name_code, stage.name, sgejob_idx))
+			sgejob = Q.submit_job(P.sgejobfile(stage.name, sgejob_idx), '%s_%s_%d' % (e.name_code, stage.name, sgejob_idx), stderr = sys.stderr.fp())
 			sgejob2job[sgejob] = [stage.jobs[job_idx] for job_idx in stage.calculate_job_range(sgejob_idx)]
 
 			for job_idx in stage.calculate_job_range(sgejob_idx):
@@ -841,6 +849,19 @@ def log(xpath, stdout = True, stderr = True):
 
 	subprocess.call('cat "%s" | less' % '" "'.join(log_paths), shell = True)
 
+def info(xpath):
+	e = init()
+
+	for stage in e.stages:
+		for job_idx in range(len(stage.jobs)):
+			if '/%s/%s' % (stage.name, job.name) == xpath:
+				print 'JOB "/%s/%s"' % (stage.name, job.name)
+				print '--'
+				print 'ENV:'
+				print '\n'.join(map('\t{0:10}: {1}'.format, sorted(job.env.items())))
+				print 'SCRIPT:'
+				print P.read_or_empty(P.jobfile(stage.name, job_idx))
+
 if __name__ == '__main__':
 	def add_config_fields(parser, config_fields):
 		for k in config_fields:
@@ -878,6 +899,10 @@ if __name__ == '__main__':
 	cmd.add_argument('--stdout', action = 'store_false', dest = 'stderr')
 	cmd.add_argument('--stderr', action = 'store_false', dest = 'stdout')
 	cmd.set_defaults(func = log)
+
+	cmd = subparsers.add_parser('info', parents = [common_parent])
+	cmd.add_argument('--xpath', required = True)
+	cmd.set_defaults(func = info)
 	
 	cmd = subparsers.add_parser('gen', parents = [common_parent, gen_parent, gen_run_parent])
 	cmd.set_defaults(func = gen)

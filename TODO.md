@@ -1,12 +1,12 @@
-- show json decoding and other file errors in html log + qstat
 - a way to start jobs that have their dependencies completed
-- a way to define first,last stage non-interactively
-- a way to reduce number of parallel jobs
-- check killed jobs for error reason with qacct
+
+- a way to define first, last stage and number of parallel jobs as command line parameter; and to change it while woody is running by file monitoring 
+
 - make html generation only from log files
-- make wall_clock_seconds output current time
-- woody path command
-- woody job command
+
 - woody resume command
+
 - guard against low disk including in put_status, resilient Magic operation
-- move time_updated below "this is a woody dashboard"
+- check killed jobs for error reason with qacct
+
+- make wall_clock_seconds output current time
