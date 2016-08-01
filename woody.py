@@ -819,6 +819,26 @@ def run(force, dry, verbose, notify):
 	
 	html(e)
 
+def log(xpath, stdout = True, stderr = True):
+	e = init()
+
+	log_slice = slice(0 if stdout else 1, 2 if stderr else 1)
+	log_paths = []
+
+	if xpath == '/':
+		log_paths += P.explogfiles()[log_slice]
+
+	for stage in e.stages:
+		if '/%s' % stage.name == xpath:
+			for sgejob_idx in range(stage.job_batch_count()):
+				log_paths += P.sgejoblogfiles(stage.name, sgejob_idx)[log_slice]
+
+		for job_idx in range(len(stage.jobs)):
+			if '/%s/%s' % (stage.name, job.name) == xpath:
+				log_paths += P.joblogfiles(stage.name, job_idx)[log_slice]
+
+	subprocess.call('cat "%s" | less' % '" "'.join(log_paths), shell = True)
+
 if __name__ == '__main__':
 	def add_config_fields(parser, config_fields):
 		for k in config_fields:
@@ -853,6 +873,12 @@ if __name__ == '__main__':
 	subparsers.add_parser('stop', parents = [common_parent]).set_defaults(func = stop)
 	subparsers.add_parser('clean', parents = [common_parent]).set_defaults(func = clean)
 	subparsers.add_parser('html', parents = [common_parent]).set_defaults(func = html)
+
+	cmd = subparsers.add_parser('log', parents = [common_parent])
+	cmd.add_argument('--xpath', required = True)
+	cmd.add_argument('--stdout', action = 'store_false', dest = 'stderr')
+	cmd.add_argument('--stderr', action = 'store_false', dest = 'stdout')
+	cmd.set_defaults(func = log)
 	
 	cmd = subparsers.add_parser('gen', parents = [common_parent, gen_parent, gen_run_parent])
 	cmd.set_defaults(func = gen)

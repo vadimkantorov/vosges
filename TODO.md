@@ -3,7 +3,6 @@
 - copy the report to target directory too
 - a way to define first,last stage non-interactively
 - a way to reduce number of parallel jobs
-- log command
 - check jobs for error reason    1:          05/18/2016 19:26:41 [0:136348]: exit_status of prolog = 1
 - make html generation only from log files
 - make wall_clock_seconds output current time
