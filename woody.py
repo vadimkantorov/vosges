@@ -14,13 +14,14 @@ import xml.dom.minidom
 class config:
 	tool_name = 'woody'
 	root = '.' + tool_name
-	html_root = None
+	html_root = []
 	html_root_alias = None
 	notification_command_on_error = None
 	notification_command_on_success = None
 	strftime = '%d/%m/%Y %H:%M:%S'
 	max_stdout_size = 2048
 	sleep_between_queue_checks = 2.0
+
 	path = []
 	ld_library_path = []
 	source = []
@@ -66,11 +67,10 @@ class P:
 		P.experiment_name_code = P.experiment_name + '_' + hashlib.md5(os.path.abspath(P.exp_py)).hexdigest()[:3].upper()
 		
 		P.root = os.path.abspath(config.root)
-		P.html_root = config.html_root or os.path.join(P.root, 'html')
+		P.html_root = config.html_root or [os.path.join(P.root, 'html')]
 		P.html_root_alias = config.html_root_alias
-		html_report_file_name = P.experiment_name_code + '.html'
-		P.html_report = os.path.join(P.html_root, html_report_file_name)
-		P.html_report_link = os.path.join(P.html_root_alias or P.html_root, html_report_file_name)
+		P.html_report_file_name = P.experiment_name_code + '.html'
+		P.html_report_url = os.path.join(P.html_root_alias or P.html_root[0], P.html_report_file_name)
 
 		P.experiment_root = os.path.join(P.root, P.experiment_name_code)
 		P.log = os.path.join(P.experiment_root, 'log')
@@ -520,7 +520,7 @@ def html(e = None):
 		for stage in e.stages:
 			for job_idx, job in enumerate(stage.jobs):
 				job.status = Magic(P.read_or_empty(P.joblogfiles(stage.name, job_idx)[1])).status() or job.status
-		print '%-30s %s' % ('Report will be at:', P.html_report_link)
+		print '%-30s %s' % ('Report will be at:', P.html_report_url)
 
 	sgejoblog_paths = lambda stage, k: [P.sgejoblogfiles(stage.name, sgejob_idx)[k] for sgejob_idx in range(stage.job_batch_count())]
 	sgejoblog = lambda stage, k: '\n'.join(['#BATCH #%d (%s)\n%s\n\n' % (sgejob_idx, log_file_path, P.read_or_empty(log_file_path)) for sgejob_idx, log_file_path in enumerate(sgejoblog_paths(stage, k))])
@@ -603,8 +603,10 @@ def html(e = None):
 		}) for stage in e.stages]
 	}
 
-	with open(P.html_report, 'w') as f:
-		f.write(HTML_PATTERN % (e.name_code, json.dumps(report, default = str), config.tool_name, config.tool_name))
+	report_json = json.dumps(report, default = str)
+	for html_dir in P.html_root:
+		with open(os.path.join(html_dir, P.html_report_file_name), 'w') as f:
+			f.write(HTML_PATTERN % (e.name_code, report_json, config.tool_name, config.tool_name))
 
 def clean():
 	if os.path.exists(P.experiment_root):
@@ -708,7 +710,7 @@ def gen(force, locally):
 def run(force, dry, verbose, notify):
 	e = gen(force, False)
 
-	print '%-30s %s' % ('Report will be at:', P.html_report_link)
+	print '%-30s %s' % ('Report will be at:', P.html_report_url)
 	print ''
 
 	html(e)
@@ -799,7 +801,7 @@ def run(force, dry, verbose, notify):
 			print '[error, elapsed %s]' % elapsed
 			if notify and config.notification_command_on_error:
 				print 'Executing custom notification_command_on_error.'
-				cmd = config.notification_command_on_error.format(NAME_CODE = e.name_code, HTML_REPORT_LINK = P.html_report_link, FAILED_STAGE = stage.name, FAILED_JOB = [job.name for job in stage.jobs if job.has_failed()][0])
+				cmd = config.notification_command_on_error.format(NAME_CODE = e.name_code, HTML_REPORT_URL = P.html_report_url, FAILED_STAGE = stage.name, FAILED_JOB = [job.name for job in stage.jobs if job.has_failed()][0])
 				print >> sys.stderr.verbose(), 'Command: %s' % cmd
 				print 'Exit code: %d' % subprocess.call(cmd, shell = True, stdout = sys.stderr.diskfile, stderr = sys.stderr.diskfile)
 			print '\nStopping the experiment. Skipped stages: %s' % ', '.join([e.stages[si].name for si in range(stage_idx + 1, len(e.stages))])
@@ -812,7 +814,7 @@ def run(force, dry, verbose, notify):
 	if not e.has_failed_stages():
 		if notify and config.notification_command_on_success:
 			print 'Executing custom notification_command_on_success.'
-			cmd = config.notification_command_on_success.format(NAME_CODE = e.name_code, HTML_REPORT_LINK = P.html_report_link)
+			cmd = config.notification_command_on_success.format(NAME_CODE = e.name_code, HTML_REPORT_URL = P.html_report_url)
 			print >> sys.stderr.verbose(), 'Command: %s' % cmd
 			print 'Exit code: %d' % subprocess.call(cmd, shell = True, stdout = sys.stderr.diskfile, stderr = sys.stderr.diskfile)
 		print '\nALL OK. KTHXBAI!'
@@ -842,18 +844,13 @@ def log(xpath, stdout = True, stderr = True):
 if __name__ == '__main__':
 	def add_config_fields(parser, config_fields):
 		for k in config_fields:
-			if isinstance(k, tuple):
-				arg_names = ('--' + k[0], '-' + k[1])
-				k = k[0]
-			else:
-				arg_names = ('--' + k, )
-			parser.add_argument(*arg_names, type = type(getattr(config, k) or ''))
+			parser.add_argument('--' + k, type = type(getattr(config, k) or ''))
 
 	common_parent = argparse.ArgumentParser(add_help = False)
 	common_parent.add_argument('exp_py')
 
 	gen_parent = argparse.ArgumentParser(add_help = False)
-	add_config_fields(gen_parent, ['queue', 'mem_lo_gb', 'mem_hi_gb', ('parallel_jobs', 'p'), 'batch_size'])
+	add_config_fields(gen_parent, ['queue', 'mem_lo_gb', 'mem_hi_gb', 'parallel_jobs', 'batch_size'])
 	gen_parent.add_argument('--source', action = 'append', default = [])
 	gen_parent.add_argument('--path', action = 'append', default = [])
 	gen_parent.add_argument('--ld_library_path', action = 'append', default = [])
@@ -867,7 +864,9 @@ if __name__ == '__main__':
 
 	parser = argparse.ArgumentParser(parents = [run_parent, gen_parent])
 	parser.add_argument('--rcfile', default = os.path.expanduser('~/.%src' % config.tool_name))
-	add_config_fields(parser, ['root', 'html_root', 'html_root_alias'])
+	parser.add_argument('--root')
+	parser.add_argument('--html_root', action = 'append', default = [])
+	parser.add_argument('--html_root_alias')
 
 	subparsers = parser.add_subparsers()
 	subparsers.add_parser('stop', parents = [common_parent]).set_defaults(func = stop)
