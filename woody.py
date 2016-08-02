@@ -7,13 +7,14 @@ import time
 import shutil
 import hashlib
 import argparse
+import traceback
 import itertools
 import subprocess
 import xml.dom.minidom
 
 class config:
-	tool_name = 'woody'
-	root = '.' + tool_name
+	__tool_name__ = 'woody'
+	root = '.' + __tool_name__
 	html_root = []
 	html_root_alias = None
 	notification_command_on_error = None
@@ -33,14 +34,10 @@ class config:
 	parallel_jobs = 4
 	batch_size = 1
 
-	items = staticmethod(lambda: [(k, v) for k, v in vars(config).items() if '__' not in k and k not in ['items', 'tool_name', 'update']])
-
-	@staticmethod
-	def update(**kwargs):
-		for k, v in kwargs.items():
-			setattr(config, k, v)
+	__items__ = staticmethod(lambda: [(k, v) for k, v in vars(config).items() if '__' not in k])
 
 class P:
+	bugreport_page = 'http://github.com/vadimkantorov/%s/issues' % config.__tool_name__ 
 	jobdir = staticmethod(lambda stage_name: os.path.join(P.job, stage_name))
 	logdir = staticmethod(lambda stage_name: os.path.join(P.log, stage_name))
 	sgejobdir = staticmethod(lambda stage_name: os.path.join(P.sgejob, stage_name))
@@ -230,7 +227,7 @@ class Executable:
 		return ['%s %s "%s" %s' % (self.executor, self.switches, self.script_path, self.script_args)]
 
 class Magic:
-	prefix = '%' + config.tool_name
+	prefix = '%' + config.__tool_name__
 	class Action:
 		stats = 'stats'
 		environ = 'environ'
@@ -240,20 +237,26 @@ class Magic:
 	def __init__(self, stderr):
 		self.stderr = stderr
 	
-	def findall(self, action):
-		return re.findall('%s %s (.+)$' % (Magic.prefix, action), self.stderr, re.MULTILINE) 
+	def findall_and_load_arg(self, action):
+		def safe_json_loads(s):
+			try:
+				return json.loads(s)
+			except:
+				print >> sys.stderr, 'Error parsing json. Action: %s. Stderr:\n%s' % (action, self.stderr)
+				return {}
+		return map(safe_json_loads, re.findall('%s %s (.+)$' % (Magic.prefix, action), self.stderr, re.MULTILINE))
 
 	def stats(self):
-		return dict(itertools.chain(*map(dict.items, map(json.loads, self.findall(Magic.Action.stats)) or [{}])))
+		return dict(itertools.chain(*map(dict.items, self.findall_and_load_arg(Magic.Action.stats) or [{}])))
 
 	def environ(self):
-		return (map(json.loads, self.findall(Magic.Action.environ)) or [{}])[0]
+		return (self.findall_and_load_arg(Magic.Action.environ) or [{}])[0]
 
 	def results(self):
-		return map(json.loads, self.findall(Magic.Action.results))
+		return self.findall_and_load_arg(Magic.Action.results)
 
 	def status(self):
-		return (map(json.loads, self.findall(Magic.Action.status)) or [None])[-1]
+		return (self.findall_and_load_arg(Magic.Action.status) or [None])[-1]
 
 	@staticmethod
 	def echo(action, arg):
@@ -517,7 +520,7 @@ def html(e = None):
 		</div>
 	</body>
 </html>
-	'''
+'''
 
 	if e == None:
 		print 'You are in debug mode, the report will not be 100% complete and accurate.'
@@ -536,8 +539,13 @@ def html(e = None):
 	
 	exp_job_logs = {obj : (P.read_or_empty(log_paths[0]), Magic(P.read_or_empty(log_paths[1]))) for obj, log_paths in [(e, P.explogfiles())] + [(job, P.joblogfiles(stage.name, job_idx)) for stage in e.stages for job_idx, job in enumerate(stage.jobs)]}
 
+	def put_extra_job_stats(report_job):
+		if report_job['status'] == Experiment.ExecutionStatus.running and report_job['stats'].get('time_started_unix']) != None:
+			report_job['stats']['time_wall_clock_seconds'] = int(time.time()) - int(report_job['stats']['time_started_unix'])
+		return report_job
+
 	def put_extra_stage_stats(report_stage):
-		wall_clock_seconds = filter(lambda x: x != None, [report_job['stats'].get('time_wall_clock_seconds') for report_job in report_stage['jobs']])
+		wall_clock_seconds = filter(lambda x: x != None, [report_job['stats'].get('time_wall_clock_seconds') for report_job in report_stage['jobs'] if report_job['status'] != Experiment.ExecutionStatus.running])
 		report_stage['stats']['time_wall_clock_avg_seconds'] = float(sum(wall_clock_seconds)) / len(wall_clock_seconds) if wall_clock_seconds else None
 		return report_stage
 
@@ -568,14 +576,14 @@ def html(e = None):
 		'environ' : exp_job_logs[e][1].environ(),
 		'env' : config.env,
 		'stats' : merge_dicts([{
-			'time_updated' : time.strftime(config.strftime), 
+			'time_updated' : time.strftime(config.strftime),
 			'experiment_root' : P.experiment_root,
 			'exp_py' : os.path.abspath(P.exp_py),
 			'rcfile' : P.rcfile,
 			'name_code' : e.name_code, 
 			'html_root' : P.html_root, 
 			'argv_joined' : ' '.join(['"%s"' % arg if ' ' in arg else arg for arg in sys.argv])}, 
-			{'config.' + k : v for k, v in config.items()},
+			{'config.' + k : v for k, v in config.__items__()},
 			exp_job_logs[e][1].stats()
 		]),
 		'stages' : [put_extra_stage_stats({
@@ -591,7 +599,7 @@ def html(e = None):
 				'mem_lo_gb' : stage.mem_lo_gb, 
 				'mem_hi_gb' : stage.mem_hi_gb,
 			},
-			'jobs' : [{
+			'jobs' : [put_extra_job_stats({
 				'name' : job.name, 
 				'stdout' : truncate_stdout(exp_job_logs[job][0]),
 				'stdout_path' : P.joblogfiles(stage.name, job_idx)[0],
@@ -604,14 +612,14 @@ def html(e = None):
 				'env' : job.env,
 				'results' : process_results(exp_job_logs[job][1].results()),
 				'stats' : exp_job_logs[job][1].stats()
-			} for job_idx, job in enumerate(stage.jobs)] 
+			}) for job_idx, job in enumerate(stage.jobs)] 
 		}) for stage in e.stages]
 	}
 
 	report_json = json.dumps(report, default = str)
 	for html_dir in P.html_root:
 		with open(os.path.join(html_dir, P.html_report_file_name), 'w') as f:
-			f.write(HTML_PATTERN % (e.name_code, report_json, config.tool_name, config.tool_name))
+			f.write(HTML_PATTERN % (e.name_code, report_json, config.__tool_name__, config.__tool_name__))
 
 def clean():
 	if os.path.exists(P.experiment_root):
@@ -650,7 +658,7 @@ def gen(force, locally):
 		if force == False:
 			print 'Please stop existing jobs for this experiment first. Add --force to the previous command or type:'
 			print ''
-			print '%s stop "%s"' % (config.tool_name, P.exp_py)
+			print '%s stop "%s"' % (config.__tool_name__, P.exp_py)
 			print ''
 			sys.exit(1)
 		else:
@@ -700,6 +708,7 @@ def gen(force, locally):
 						'# stage.name = "%s", job.name = "%s", job_idx = %d' % (stage.name, stage.jobs[job_idx].name, job_idx),
 						'echo "' + qq(Magic.echo(Magic.Action.status, Experiment.ExecutionStatus.running)) + '" > "%s"' % job_stderr_path,
 						'echo "' + qq(Magic.echo(Magic.Action.stats, {'time_started' : "$(date +'%s')" % config.strftime})) + '" >> "%s"' % job_stderr_path,
+						'echo "' + qq(Magic.echo(Magic.Action.stats, {'time_started_unix' : "$(date +'%s')"})) + '" >> "%s"' % job_stderr_path,
 						'echo "' + qq(Magic.echo(Magic.Action.stats, {'hostname' : '$(hostname)'})) + '" >> "%s"' % job_stderr_path,
 						'echo "' + qq(Magic.echo(Magic.Action.stats, {'qstat_job_id' : '$JOB_ID'})) + '" >> "%s"' % job_stderr_path,
 						'echo "' + qq(Magic.echo(Magic.Action.stats, {'cuda_visible_devices' : '$CUDA_VISIBLE_DEVICES'})) + '" >> "%s"' % job_stderr_path,
@@ -788,6 +797,8 @@ def run(force, dry, verbose, notify):
 	print >> sys.stderr.nodup(), Magic.echo(Magic.Action.environ, dict(os.environ))
 
 	for stage_idx, stage in enumerate(e.stages):
+		unhandled_exception_hook.notification_hook = lambda formatted_exception_message : subprocess.call(config.notification_command_on_error.format(NAME_CODE = e.name_code, HTML_REPORT_URL = P.html_report_url, FAILED_STAGE = stage.name, FAILED_JOB = [job.name for job in stage.jobs if job.has_failed()][0], EXCEPTION_MESSAGE = formatted_exception_message), shell = True)
+
 		time_started = time.time()
 		sys.stdout.write('%-30s ' % ('%s (%d jobs)' % (stage.name, len(stage.jobs))))
 		for sgejob_idx in range(stage.job_batch_count()):
@@ -808,10 +819,10 @@ def run(force, dry, verbose, notify):
 
 			print '[error, elapsed %s]' % elapsed
 			if notify and config.notification_command_on_error:
-				print 'Executing custom notification_command_on_error.'
+				sys.stdout.write('Executing custom notification_command_on_error. ')
 				cmd = config.notification_command_on_error.format(NAME_CODE = e.name_code, HTML_REPORT_URL = P.html_report_url, FAILED_STAGE = stage.name, FAILED_JOB = [job.name for job in stage.jobs if job.has_failed()][0])
-				print >> sys.stderr.verbose(), 'Command: %s' % cmd
-				print 'Exit code: %d' % subprocess.call(cmd, shell = True, stdout = sys.stderr.diskfile, stderr = sys.stderr.diskfile)
+				print >> sys.stderr.verbose(), '\nCommand: %s' % cmd
+				print 'Exit code: %d' % subprocess.call(cmd, shell = True, stdout = sys.stderr.fp(), stderr = sys.stderr.fp())
 			print '\nStopping the experiment. Skipped stages: %s' % ', '.join([e.stages[si].name for si in range(stage_idx + 1, len(e.stages))])
 			break
 		else:
@@ -821,10 +832,10 @@ def run(force, dry, verbose, notify):
 
 	if not e.has_failed_stages():
 		if notify and config.notification_command_on_success:
-			print 'Executing custom notification_command_on_success.'
+			sys.stdout.write('Executing custom notification_command_on_success. ')
 			cmd = config.notification_command_on_success.format(NAME_CODE = e.name_code, HTML_REPORT_URL = P.html_report_url)
-			print >> sys.stderr.verbose(), 'Command: %s' % cmd
-			print 'Exit code: %d' % subprocess.call(cmd, shell = True, stdout = sys.stderr.diskfile, stderr = sys.stderr.diskfile)
+			print >> sys.stderr.verbose(), '\nCommand: %s' % cmd
+			print 'Exit code: %d' % subprocess.call(cmd, shell = True, stdout = sys.stderr.fp(), stderr = sys.stderr.fp())
 		print '\nALL OK. KTHXBAI!'
 	
 	html(e)
@@ -862,7 +873,30 @@ def info(xpath):
 				print 'SCRIPT:'
 				print P.read_or_empty(P.jobfile(stage.name, job_idx))
 
+
+def unhandled_exception_hook(exc_type, exc_value, exc_traceback):
+	formatted_exception_message = '\n'.join([
+		'Unhandled exception occured!',
+		'',
+		'If it is not a "No space left on device", please consider filing a bug report at %s' % P.bugreport_page,
+		'Please paste the stack trace below into the issue.',
+		'',
+		'==STACK_TRACE_BEGIN==',
+		'',
+		''.join(traceback.format_exception(exc_type, exc_value, exc_traceback)),
+		'===STACK_TRACE_END==='
+	])
+
+	print >> sys.__stderr_, formatted_exception_message
+	
+	if unhandled_exception_hook.notification_hook_on_error:
+		unhandled_exception_hook.notification_hook_on_error(formatted_exception_message)
+
+	sys.exit(1)
+
 if __name__ == '__main__':
+	unhandled_exception_hook.notification_hook_on_error = None 
+	sys.excepthook = unhandled_exception_hook
 	def add_config_fields(parser, config_fields):
 		for k in config_fields:
 			parser.add_argument('--' + k, type = type(getattr(config, k) or ''))
@@ -884,7 +918,7 @@ if __name__ == '__main__':
 	gen_run_parent.add_argument('--force', action = 'store_true')
 
 	parser = argparse.ArgumentParser(parents = [run_parent, gen_parent])
-	parser.add_argument('--rcfile', default = os.path.expanduser('~/.%src' % config.tool_name))
+	parser.add_argument('--rcfile', default = os.path.expanduser('~/.%src' % config.__tool_name__))
 	parser.add_argument('--root')
 	parser.add_argument('--html_root', action = 'append', default = [])
 	parser.add_argument('--html_root_alias')
@@ -921,7 +955,7 @@ if __name__ == '__main__':
 		exec open(rcfile).read() in globals(), globals()
 
 	args['env'] = dict([k_eq_v.split('=') for k_eq_v in args.pop('env', {})])
-	for k, v in config.items():
+	for k, v in config.__items__():
 		arg = args.pop(k)
 		if arg != None:
 			if isinstance(arg, list):
@@ -937,5 +971,5 @@ if __name__ == '__main__':
 	except KeyboardInterrupt:
 		print 'Quitting (Ctrl+C pressed). To stop jobs:'
 		print ''
-		print '%s stop "%s"' % (config.tool_name, P.exp_py)
+		print '%s stop "%s"' % (config.__tool_name__, P.exp_py)
 		print ''
