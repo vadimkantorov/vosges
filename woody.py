@@ -73,7 +73,7 @@ class P:
 		P.log = os.path.join(P.experiment_root, 'log')
 		P.job = os.path.join(P.experiment_root, 'job')
 		P.sgejob = os.path.join(P.experiment_root, 'sge')
-		P.all_dirs = [P.root, P.html_root, P.experiment_root, P.log, P.job, P.sgejob]
+		P.all_dirs = [P.root, P.experiment_root, P.log, P.job, P.sgejob] + P.html_root
 
 class Q:
 	@staticmethod
@@ -292,7 +292,7 @@ def html(e = None):
 
 			.modal-dialog, .modal-content {height: 90%%;}
 			.modal-body { height:calc(100%% - 100px); }
-			.full-screen {height:100%%; width: 100%%}
+			.full-screen {height:calc(100%% - 120px); width: 100%%}
 		</style>
 	</head>
 	<body>
@@ -333,8 +333,8 @@ def html(e = None):
 				});
 
 				$(window).on('hashchange', function() {
-					var re = /(\#[^\/]+)?(\/.+)?/;
-					var groups = re.exec(window.location.hash);
+					var re = /\#(\/[^\/]+)?(\/.+)?/;
+					var groups = re.exec(window.location.hash) || [];
 					var stage_name = groups[1], job_name = groups[2];
 
 					var stats_keys_reduced_experiment = ['name_code', 'time_started', 'time_finished'];
@@ -345,49 +345,56 @@ def html(e = None):
 					var render_details = function(obj, ctx) {
 						$('#divDetails').html($('#tmplDetails').render(obj, ctx));
 						$('pre.log-output').each(function() {$(this).scrollTop(this.scrollHeight);});
+						$('#lnkJobName').html(ctx.header || '&nbsp;');
 					};
 			
 					$('#divExp').html($('#tmplExp').render(report));
 					$('#lnkExpName').html(report.name);
 					for(var i = 0; i < report.stages.length; i++)
 					{
-						if('#' + report.stages[i].name == stage_name)
+						if('/' + report.stages[i].name == stage_name)
 						{
 							$('#divJobs').html($('#tmplJobs').render(report.stages[i]));
 							for(var j = 0; j < report.stages[i].jobs.length; j++)
 							{
 								if('/' + report.stages[i].jobs[j].name == job_name)
 								{
-									render_details(report.stages[i].jobs[j], {header : {text : '/' + stage_name + '/' + report.stages[i].jobs[j].name, href : '#' + stage_name + '/' + job_name}, stats_keys_reduced : stats_keys_reduced_job, environ_keys_reduced : environ_keys_reduced});
+									render_details(report.stages[i].jobs[j], {
+										header : stage_name + job_name,
+										stats_keys_reduced : stats_keys_reduced_job, 
+										environ_keys_reduced : environ_keys_reduced
+									});
 									return;
 								}
 							}
 
-							render_details(report.stages[i], {header : {text : '/' + stage_name, href : '#' + stage_name}stats_keys_reduced : stats_keys_reduced_stage, environ_keys_reduced : environ_keys_reduced});
+							render_details(report.stages[i], {
+								header : stage_name, 
+								stats_keys_reduced : stats_keys_reduced_stage, 
+								environ_keys_reduced : environ_keys_reduced
+							});
 							return;
 						}
 					}
 					$('#divJobs').html('');
-					render_details(report, {stats_keys_reduced : stats_keys_reduced_experiment, environ_keys_reduced : environ_keys_reduced});
+					render_details(report, {
+						stats_keys_reduced : stats_keys_reduced_experiment,
+						environ_keys_reduced : environ_keys_reduced
+					});
 				}).trigger('hashchange');
 			});
 
 		</script>
 		<div class="container">
 			<div class="row">
-				<div class="col-sm-8">
-					<h1><a href="#" id="experimentNameLink"></a></h1>
-				</div>
-				<div class="col-sm-4 text-right">
-					<h4>this is a <a href="https://github.com/vadimkantorov/%s">%s</a> dashboard</h4>
-					<h5>updated at {{>stats.time_updated}}</h5>
+				<div class="col-sm-12">
+					<h1><a href="#" id="lnkExpName"></a></h1>
+					<h1><a href="#" id="lnkJobName"></a></h1>
 				</div>
 			</div>
-			<br />
 			<div class="row">
 				<div class="col-sm-4 experiment-pane" id="divExp"></div>
 				<script type="text/x-jsrender" id="tmplExp">
-					<h1></h1>
 					<h3>stages</h3>
 					<table class="table table-bordered">
 						<thead>
@@ -397,7 +404,7 @@ def html(e = None):
 						<tbody>
 							{{for stages}}
 							<tr>
-								<td><a href="#{{>name}}">{{>name}}</a></td>
+								<td><a href="#/{{>name}}">{{>name}}</a></td>
 								<td title="{{>status}}" class="job-status-{{>status}}"></td>
 							</tr>
 							{{/for}}
@@ -407,7 +414,6 @@ def html(e = None):
 
 				<div class="col-sm-4 experiment-pane" id="divJobs"></div>
 				<script type="text/x-jsrender" id="tmplJobs">
-					<h1></h1>
 					<h3>jobs</h3>
 					<table class="table table-bordered">
 						<thead>
@@ -417,7 +423,7 @@ def html(e = None):
 						<tbody>
 							{{for jobs}}
 							<tr>
-								<td><a href="#{{>#parent.parent.data.name}}/{{>name}}">{{>name}}</a></td>
+								<td><a href="#/{{>#parent.parent.data.name}}/{{>name}}">{{>name}}</a></td>
 								<td title="{{>status}}" class="job-status-{{>status}}"></td>
 							</tr>
 							{{/for}}
@@ -427,7 +433,6 @@ def html(e = None):
 
 				<div class="col-sm-4 experiment-pane" id="divDetails"></div>
 				<script type="text/x-jsrender" id="tmplDetails">
-					<h1>{{if ~header}}<a href="{{>~header.href}}">{{>~header.text}}</a>{{/if}}&nbsp;</h1>
 					<h3><a data-toggle="collapse" data-target=".extended-stats">stats &amp; config</a></h3>
 					<table class="table table-striped">
 						{{for ~stats_keys_reduced ~stats=stats tmpl="#tmplStats" /}}
@@ -492,7 +497,12 @@ def html(e = None):
 								<h4 class="modal-title">{{>~name}}</h4>
 							</div>
 							<div class="modal-body">
-								<p><strong>path:</strong>&nbsp;{{if ~path}}{{>~path}}{{else}}no path provided{{/if}}</p>
+								{{if ~path}}
+								<h5>path</h5>
+								<pre class="pre-scrollable">{{>~path}}</pre>
+								<br />
+								{{/if}}
+								<h5>content</h5>
 								{{if ~type == 'text'}}
 								<pre class="full-screen">{{>~value}}</pre>
 								{{else ~type == 'iframe'}}
@@ -518,6 +528,15 @@ def html(e = None):
 				</script>
 			</div>
 		</div>
+		<nav class="navbar navbar-default navbar-fixed-bottom" role="navigation">
+			<div class="container">
+				<div class="row">
+					<div class="col-sm-12">
+						<h4>this is a <a href="https://github.com/vadimkantorov/%s">%s</a> dashboard generated at %s</h4>
+					</div>
+				</div>
+			</div>
+		</nav>
 	</body>
 </html>
 '''
@@ -540,7 +559,7 @@ def html(e = None):
 	exp_job_logs = {obj : (P.read_or_empty(log_paths[0]), Magic(P.read_or_empty(log_paths[1]))) for obj, log_paths in [(e, P.explogfiles())] + [(job, P.joblogfiles(stage.name, job_idx)) for stage in e.stages for job_idx, job in enumerate(stage.jobs)]}
 
 	def put_extra_job_stats(report_job):
-		if report_job['status'] == Experiment.ExecutionStatus.running and report_job['stats'].get('time_started_unix']) != None:
+		if report_job['status'] == Experiment.ExecutionStatus.running and 'time_started_unix' in report_job['stats']:
 			report_job['stats']['time_wall_clock_seconds'] = int(time.time()) - int(report_job['stats']['time_started_unix'])
 		return report_job
 
@@ -576,7 +595,6 @@ def html(e = None):
 		'environ' : exp_job_logs[e][1].environ(),
 		'env' : config.env,
 		'stats' : merge_dicts([{
-			'time_updated' : time.strftime(config.strftime),
 			'experiment_root' : P.experiment_root,
 			'exp_py' : os.path.abspath(P.exp_py),
 			'rcfile' : P.rcfile,
@@ -619,7 +637,7 @@ def html(e = None):
 	report_json = json.dumps(report, default = str)
 	for html_dir in P.html_root:
 		with open(os.path.join(html_dir, P.html_report_file_name), 'w') as f:
-			f.write(HTML_PATTERN % (e.name_code, report_json, config.__tool_name__, config.__tool_name__))
+			f.write(HTML_PATTERN % (e.name_code, report_json, config.__tool_name__, config.__tool_name__, time.strftime(config.strftime)))
 
 def clean():
 	if os.path.exists(P.experiment_root):
@@ -887,7 +905,7 @@ def unhandled_exception_hook(exc_type, exc_value, exc_traceback):
 		'===STACK_TRACE_END==='
 	])
 
-	print >> sys.__stderr_, formatted_exception_message
+	print >> sys.__stderr__, formatted_exception_message
 	
 	if unhandled_exception_hook.notification_hook_on_error:
 		unhandled_exception_hook.notification_hook_on_error(formatted_exception_message)
