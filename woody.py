@@ -499,7 +499,7 @@ def html(e = None):
 							<div class="modal-body">
 								{{if ~path}}
 								<h5>path</h5>
-								<pre class="pre-scrollable">{{>~path}}</pre>
+								<pre>{{>~path}}</pre>
 								<br />
 								{{/if}}
 								<h5>content</h5>
