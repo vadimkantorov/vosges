@@ -4,4 +4,3 @@
 - make html generation only from log files
 - woody resume command
 - check killed jobs for error reason with qacct
-

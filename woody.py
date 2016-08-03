@@ -14,6 +14,8 @@ import xml.dom.minidom
 
 class config:
 	__tool_name__ = 'woody'
+	__items__ = staticmethod(lambda: [(k, v) for k, v in vars(config).items() if '__' not in k])
+
 	root = '.' + __tool_name__
 	html_root = []
 	html_root_alias = None
@@ -33,8 +35,6 @@ class config:
 	mem_hi_gb = 64.0
 	parallel_jobs = 4
 	batch_size = 1
-
-	__items__ = staticmethod(lambda: [(k, v) for k, v in vars(config).items() if '__' not in k])
 
 class P:
 	bugreport_page = 'http://github.com/vadimkantorov/%s/issues' % config.__tool_name__ 
