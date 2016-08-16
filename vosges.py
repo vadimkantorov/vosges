@@ -234,9 +234,6 @@ class Experiment:
 	def experiment_name(self):
 		return self.name
 
-	def get_used_paths(self):
-		return [v for k, v in sorted(self.env.items()) if isinstance(v, Path)] + [self.cwd] + self.executable.get_used_paths()
-
 class Magic:
 	prefix = '%' + __tool_name__
 	class Action:
