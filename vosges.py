@@ -273,7 +273,7 @@ class Magic:
 	def echo(action, arg):
 		return '%s %s %s' % (Magic.prefix, action, json.dumps(arg))
 	
-def info(e = None, xpath = None, html = False):
+def info(e = None, xpath = None, html = False, print_html_report_location = True):
 	HTML_PATTERN = '''
 <!DOCTYPE html>
 
@@ -591,7 +591,8 @@ def info(e = None, xpath = None, html = False):
 	}
 
 	if html:
-		print '%-30s %s' % ('Report will be at:', P.html_report_url)
+		if print_html_report_location:
+			print '%-30s %s' % ('Report will be at:', P.html_report_url)
 		report_json = json.dumps(report, default = str)
 		for html_dir in P.html_root:
 			with open(os.path.join(html_dir, P.html_report_file_name), 'w') as f:
@@ -640,35 +641,34 @@ def init():
 	
 	return e
 
-def gen(force, locally):
-	if not locally and len(Q.get_jobs(P.experiment_name_code)) > 0:
-		if force == False:
-			print 'Please stop existing jobs for this experiment first. Add --force to the previous command or type:'
-			print ''
-			print '%s stop "%s"' % (__tool_name__, P.exp_py)
-			print ''
-			sys.exit(1)
-		else:
-			stop()
-
-	if not locally:
-		clean()
-	
-	e = init()
-
-	print '%-30s %s' % ('Generating the experiment to:', P.locally_generated_script if locally else P.experiment_root)
-	for p in [p for job in e.jobs for p in job.get_used_paths() if p.domakedirs == True and not os.path.exists(str(p))]:
-		os.makedirs(str(p))
-
+def run(dry, notify, locally):
 	generate_job_bash_script_lines = lambda job: ['# %s' % job.qualified_name] + ['for USED_FILE_PATH in "%s";' % '" "'.join(map(str, job.get_used_paths())), '\tif [ ! -e "$USED_FILE_PATH" ]; then echo File "$USED_FILE_PATH" does not exist; exit 1; fi;', 'done'] + list(itertools.starmap('export {0}="{1}"'.format, sorted(dict(job.group.env.items() + job.env.items()).items()))) + ['\n'.join(['source "%s"' % source for source in reversed(job.group.source)]), 'export PATH="%s:$PATH"' % ':'.join(reversed(job.group.path)) if job.group.path else '', 'export LD_LIBRARY_PATH="%s:$LD_LIBRARY_PATH"' % ':'.join(reversed(job.group.ld_library_path)) if job.group.ld_library_path else '', 'cd "%s"' % job.cwd, '%s %s "%s" %s' % (job.executable.executor, job.executable.command_line_options, job.executable.script_path, job.executable.script_args), '# end']
-	
+
+	intro_msg = lambda experiment_path: '%-30s %s' % ('Generating the experiment to:', experiment_path)
+
 	if locally:
+		e = init()
+		print intro_msg(P.locally_generated_script)
 		with open(P.locally_generated_script, 'w') as f:
 			f.write('#! /bin/bash\n')
 			f.write('#  this is a stand-alone script generated from "%s"\n\n' % P.exp_py)
 			for job in e.jobs:
 				f.write('\n'.join(['('] + map(lambda l: '\t' + l, generate_job_bash_script_lines(job)) + [')', '', '']))
 		return
+
+	if len(Q.get_jobs(P.experiment_name_code)) > 0:
+		print 'Existing jobs for the experiment "%s" will be stopped in %d seconds.' % (P.experiment_name_code, config.seconds_before_automatic_stopping)
+		time.sleep(config.seconds_before_automatic_stopping)
+		stop()
+	
+	print intro_msg(P.experiment_root)
+
+	clean()
+	
+	e = init()
+	
+	for p in [p for job in e.jobs for p in job.get_used_paths() if p.domakedirs == True and not os.path.exists(str(p))]:
+		os.makedirs(str(p))
 
 	for job in e.jobs:
 		with open(P.jobfile(job), 'w') as f:
@@ -706,15 +706,9 @@ def gen(force, locally):
 						'# end',
 						''
 					]))
-	return e
 
-def run(force, dry, notify):
-	e = gen(force, False)
-
-	print '%-30s %s' % ('Report will be at:', P.html_report_url)
+	info(e, html = True, print_html_report_location = True)
 	print ''
-
-	info(e, html = True)
 
 	if dry:
 		print 'Dry run. Quitting.'
@@ -770,7 +764,7 @@ def run(force, dry, notify):
 	wait_if_more_jobs_than(0)
 	print >> experiment_stderr_file, Magic.echo(Magic.Action.stats, {'time_finished' : time.strftime(config.strftime)})
 
-	info(e, html = True)
+	info(e, html = True, print_html_report_location = False)
 	
 	notify_if_enabled(e.status())
 	print ''
@@ -856,6 +850,7 @@ if __name__ == '__main__':
 	cmd = subparsers.add_parser('run', parents = [common_parent, gen_parent, run_parent, gen_run_parent])
 	cmd.set_defaults(func = run)
 	cmd.add_argument('--dry', action = 'store_true')
+	cmd.add_argument('--locally', action = 'store_true')
 	cmd.add_argument('--notify', action = 'store_true')
 	
 	args = vars(parser.parse_args())
