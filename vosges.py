@@ -29,6 +29,7 @@ class config:
 	parallel_jobs = 4
 	mem_lo_gb = 10.0
 	mem_hi_gb = 64.0
+
 	source = []
 	path = []
 	ld_library_path = []
@@ -114,7 +115,7 @@ class Path:
 		path_parts = path_parts if isinstance(path_parts, tuple) else (path_parts, )
 		assert all([part != None for part in path_parts])
 	
-		self.string = os.path.join(*path_parts)
+		self.string = os.path.join(*map(str, path_parts))
 		self.domakedirs = domakedirs
 		self.isoutput = isoutput
 
@@ -144,7 +145,7 @@ class Job:
 		self.qualified_name = '/%s/%s' % (group.name, name)
 
 	def get_used_paths(self):
-		return [v for k, v in sorted(self.env.items()) if isinstance(v, Path)] + [self.cwd] + self.executable.get_used_paths()
+		return [v for k, v in sorted(self.env.items()) if isinstance(v, Path)] + [Path(self.cwd)] + map(Path, self.executable.get_used_paths())
 
 class Group:
 	def __init__(self, name, queue = None, parallel_jobs = None, mem_lo_gb = None, mem_hi_gb = None, source = [], path = [], ld_library_path = [], env = {}):
@@ -155,10 +156,12 @@ class Group:
 		self.parallel_jobs = parallel_jobs or config.parallel_jobs
 		self.mem_lo_gb = mem_lo_gb or config.mem_lo_gb
 		self.mem_hi_gb = mem_hi_gb or config.mem_hi_gb
+
 		self.source = config.source + source
 		self.path = config.path + path
 		self.ld_library_path = config.ld_library_path + ld_library_path
 		self.env = dict(config.env.items() + env.items())
+
 		self.jobs = []
 
 class ExecutionStatus:
@@ -195,7 +198,7 @@ class Executable:
 		self.script_args = script_args
 	
 	def get_used_paths(self):
-		return [Path(str(self.script_path))]
+		return [self.script_path]
 
 class Experiment:
 	def __init__(self, name, name_code):
@@ -204,7 +207,7 @@ class Experiment:
 		self.jobs = []
 		self.groups = []
 	
-	def schedule(self, executable, name = None, env = {}, cwd = Path(os.getcwd()), group = None, dependencies = []):
+	def schedule(self, executable, name = None, env = {}, cwd = os.getcwd(), group = None, dependencies = []):
 		normalize_name = lambda name: '_'.join(map(str, name)) if isinstance(name, tuple) else str(name)
 		
 		name = normalize_name(name) if name != None else str([job.group for job in self.jobs].count(group))
@@ -221,7 +224,7 @@ class Experiment:
 
 	def find(self, xpath):
 		res = [self] if xpath == '/' else []
-		res += [group for group in self.groups if xpath == group.name or '/' + xpath == group.name]
+		res += [group for group in self.groups if group.qualified_name == xpath]
 		res += [job for job in self.jobs if job.qualified_name == xpath]
 		return (res or [None])[0]
 
@@ -270,7 +273,7 @@ class Magic:
 	def echo(action, arg):
 		return '%s %s %s' % (Magic.prefix, action, json.dumps(arg))
 	
-def html(e = None):
+def info(e = None, xpath = None, html = False):
 	HTML_PATTERN = '''
 <!DOCTYPE html>
 
@@ -454,32 +457,23 @@ def html(e = None):
 					},
 					format : function(apply_format, name, value) {
 						var return_name = arguments.length == 2;
-						if(!return_name && value == undefined)
-							return '';
+						var no_value = value == undefined;
 
-						if(!apply_format)
-							return return_name ? name : value;
-
-						if(name.indexOf('seconds') >= 0)
+						value = no_value ? 0 : value;
+						if(apply_format && name.indexOf('seconds') >= 0)
 						{
 							name = name + ' (h:m:s)'
-							if(return_name)
-								return name;
-
 							var seconds = Math.round(value);
 							var hours = Math.floor(seconds / (60 * 60));
 							var divisor_for_minutes = seconds %% (60 * 60);
-							return hours + ":" + Math.floor(divisor_for_minutes / 60) + ":" + Math.ceil(divisor_for_minutes %% 60);
+							value = hours + ":" + Math.floor(divisor_for_minutes / 60) + ":" + Math.ceil(divisor_for_minutes %% 60);
 						}
-						else if(name.indexOf('kbytes') >= 0)
+						else if(apply_format && name.indexOf('kbytes') >= 0)
 						{
 							name = name + ' (Gb)'
-							if(return_name)
-								return name;
-
-							return (value / 1024 / 1024).toFixed(1);
+							value = (value / 1024 / 1024).toFixed(1);
 						}
-						return String(return_name ? name : value);
+						return String(return_name ? name : no_value ? '' : value);
 					}
 				});
 
@@ -504,11 +498,9 @@ def html(e = None):
 '''
 
 	if e == None:
-		print 'You are in debug mode, the report will not be 100% complete and accurate.'
 		e = init()
 		for job in e.jobs:
 			job.status = Magic(P.read_or_empty(P.joblogfiles(job)[1])).status() or job.status
-		print '%-30s %s' % ('Report will be at:', P.html_report_url)
 
 	sgejoblogfiles = lambda group: [P.sgejoblogfiles(group, sgejob_idx) for sgejob_idx in range(len(group.jobs))]
 	sgejobfile = lambda group: [P.sgejobfile(group, sgejob_idx) for sgejob_idx in range(len(group.jobs))]
@@ -543,6 +535,7 @@ def html(e = None):
 		return sorted(processed_results, key = lambda item: item['name'])
 
 	report = {
+		'qualified_name' : '/',
 		'name' : e.name, 
 		'stdout' : exp_job_logs[e][0], 
 		'stdout_path' : P.explogfiles()[0],
@@ -597,10 +590,23 @@ def html(e = None):
 		}) for job in e.jobs] 
 	}
 
-	report_json = json.dumps(report, default = str)
-	for html_dir in P.html_root:
-		with open(os.path.join(html_dir, P.html_report_file_name), 'w') as f:
-			f.write(HTML_PATTERN % (e.name_code, P.project_page, time.strftime(config.strftime), report_json))
+	if html:
+		print '%-30s %s' % ('Report will be at:', P.html_report_url)
+		report_json = json.dumps(report, default = str)
+		for html_dir in P.html_root:
+			with open(os.path.join(html_dir, P.html_report_file_name), 'w') as f:
+				f.write(HTML_PATTERN % (e.name_code, P.project_page, time.strftime(config.strftime), report_json))
+	else:
+		def strip(d):
+			for strip_key in ['stdout', 'stderr', 'script', 'rcfile']:
+				if strip_key in d:
+					d[strip_key] = '<skipped>'
+			for strip_key in ['jobs', 'groups']:
+				if strip_key in d:
+					d[strip_key] = '(%d elements) %s' % (len(d[strip_key]), [elem['qualified_name'] for elem in d[strip_key]])
+			return d
+		selected = ([elem for elem in (report['jobs'] + report['groups'] + [report]) if elem['qualified_name'] == xpath] or [{'error' : 'not found'} % xpath])[0]
+		print json.dumps(strip(selected), default = str, indent = 2, sort_keys = True)
 
 def clean():
 	if os.path.exists(P.experiment_root):
@@ -653,8 +659,8 @@ def gen(force, locally):
 	print '%-30s %s' % ('Generating the experiment to:', P.locally_generated_script if locally else P.experiment_root)
 	for p in [p for job in e.jobs for p in job.get_used_paths() if p.domakedirs == True and not os.path.exists(str(p))]:
 		os.makedirs(str(p))
-	
-	generate_job_bash_script_lines = lambda job: ['# %s' % job.qualified_name] + map(lambda file_path: '''if [ ! -e "%s" ]; then echo 'File "%s" does not exist'; exit 1; fi''' % (file_path, file_path), job.get_used_paths()) + list(itertools.starmap('export {0}="{1}"'.format, sorted(job.env.items()))) + ['\n'.join(['source "%s"' % source for source in reversed(job.group.source)]), 'export PATH="%s:$PATH"' % ':'.join(reversed(job.group.path)) if job.group.path else '', 'export LD_LIBRARY_PATH="%s:$LD_LIBRARY_PATH"' % ':'.join(reversed(job.group.ld_library_path)) if job.group.ld_library_path else '', 'cd "%s"' % job.cwd, '%s %s "%s" %s' % (job.executable.executor, job.executable.command_line_options, job.executable.script_path, job.executable.script_args)]
+
+	generate_job_bash_script_lines = lambda job: ['# %s' % job.qualified_name] + ['for USED_FILE_PATH in "%s";' % '" "'.join(map(str, job.get_used_paths())), '\tif [ ! -e "$USED_FILE_PATH" ]; then echo File "$USED_FILE_PATH" does not exist; exit 1; fi;', 'done'] + list(itertools.starmap('export {0}="{1}"'.format, sorted(dict(job.group.env.items() + job.env.items()).items()))) + ['\n'.join(['source "%s"' % source for source in reversed(job.group.source)]), 'export PATH="%s:$PATH"' % ':'.join(reversed(job.group.path)) if job.group.path else '', 'export LD_LIBRARY_PATH="%s:$LD_LIBRARY_PATH"' % ':'.join(reversed(job.group.ld_library_path)) if job.group.ld_library_path else '', 'cd "%s"' % job.cwd, '%s %s "%s" %s' % (job.executable.executor, job.executable.command_line_options, job.executable.script_path, job.executable.script_args), '# end']
 	
 	if locally:
 		with open(P.locally_generated_script, 'w') as f:
@@ -708,7 +714,7 @@ def run(force, dry, notify):
 	print '%-30s %s' % ('Report will be at:', P.html_report_url)
 	print ''
 
-	html(e)
+	info(e, html = True)
 
 	if dry:
 		print 'Dry run. Quitting.'
@@ -764,7 +770,7 @@ def run(force, dry, notify):
 	wait_if_more_jobs_than(0)
 	print >> experiment_stderr_file, Magic.echo(Magic.Action.stats, {'time_finished' : time.strftime(config.strftime)})
 
-	html(e)
+	info(e, html = True)
 	
 	notify_if_enabled(e.status())
 	print ''
@@ -773,23 +779,11 @@ def run(force, dry, notify):
 def log(xpath, stdout = True, stderr = True):
 	e = init()
 
-	log_slice = slice(0 if stdout else 1, 2 if stderr else 1)
 	obj = e.find(xpath)
+	log_slice = slice(0 if stdout else 1, 2 if stderr else 1)
 	log_paths = P.joblogfiles(obj)[log_slice] if isinstance(obj, Job) else [l for sgejob_idx in range([job.group for job in e.jobs].count(obj)) for l in P.sgejoblogfiles(obj, sgejob_idx)[log_slice]] if isinstance(obj, Group) else P.explogfiles()[log_slice]
 
 	subprocess.call('cat "%s" | less' % '" "'.join(log_paths), shell = True)
-
-def info(xpath):
-	e = init()
-
-	job = e.find(xpath)
-	if job == None:
-		print 'Job "%s" not found.' % xpath
-		return
-
-	print '\n'.join(['JOB "%s"' % job.qualified_name, '--'])
-	print '\n'.join(['ENV:'] + map('{0}={1}'.format, sorted(job.env.items())) + [''])
-	print 'SCRIPT:\n' + P.read_or_empty(P.jobfile(job))
 
 def unhandled_exception_hook(exc_type, exc_value, exc_traceback):
 	formatted_exception_message = '\n'.join([
@@ -846,16 +840,17 @@ if __name__ == '__main__':
 	subparsers = parser.add_subparsers()
 	subparsers.add_parser('stop', parents = [common_parent]).set_defaults(func = stop)
 	subparsers.add_parser('clean', parents = [common_parent]).set_defaults(func = clean)
-	subparsers.add_parser('html', parents = [common_parent]).set_defaults(func = html)
 
 	cmd = subparsers.add_parser('log', parents = [common_parent])
-	cmd.add_argument('--xpath', required = True)
+	cmd.add_argument('--xpath', default = '/')
 	cmd.add_argument('--stdout', action = 'store_false', dest = 'stderr')
 	cmd.add_argument('--stderr', action = 'store_false', dest = 'stdout')
 	cmd.set_defaults(func = log)
 
 	cmd = subparsers.add_parser('info', parents = [common_parent])
-	cmd.add_argument('--xpath', required = True)
+	cmd.add_argument('--xpath', default = '/')
+	parser._get_option_tuples = lambda arg_string: [] if any([subparser._get_option_tuples(arg_string) for action in parser._subparsers._actions if isinstance(action, argparse._SubParsersAction) for subparser in action.choices.values()]) else super(ArgumentParser, parser)._get_option_tuples(arg_string) # monkey patching for https://bugs.python.org/issue14365, hack inspired by https://bugs.python.org/file24945/argparse_dirty_hack.py
+	cmd.add_argument('--html', dest = 'html', action = 'store_true')
 	cmd.set_defaults(func = info)
 	
 	cmd = subparsers.add_parser('run', parents = [common_parent, gen_parent, run_parent, gen_run_parent])

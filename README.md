@@ -15,7 +15,9 @@ Requirements: python2.7, curl/wget
 
 # Commands
 - `vosges run`
+- `vosges stop`
 - `vosges log`
 - `vosges info`
+- `vosges clean`
 
 # Notes
