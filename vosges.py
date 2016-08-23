@@ -4,6 +4,7 @@ import sys
 import math
 import json
 import time
+import errno
 import shutil
 import hashlib
 import argparse
@@ -23,7 +24,8 @@ class config:
 	notification_command = None
 	strftime = '%d/%m/%Y %H:%M:%S'
 	max_stdout_size = 2048
-	sleep_between_queue_checks = 2.0
+	seconds_between_queue_checks = 2.0
+	seconds_before_automatic_stopping = 10.0
 
 	queue = None
 	parallel_jobs = 4
@@ -59,12 +61,12 @@ class P:
 		return ''
 
 	@staticmethod
-	def init(exp_py, rcfile):
-		P.exp_py = exp_py
+	def init(experiment_script, rcfile):
+		P.experiment_script = experiment_script
 		P.rcfile = os.path.abspath(rcfile)
-		P.locally_generated_script = os.path.abspath(os.path.basename(exp_py) + '.generated.sh')
-		P.experiment_name = os.path.basename(P.exp_py)
-		P.experiment_name_code = P.experiment_name + '_' + hashlib.md5(os.path.abspath(P.exp_py)).hexdigest()[:3].upper()
+		P.locally_generated_script = os.path.abspath(os.path.basename(experiment_script) + '.generated.sh')
+		P.experiment_name = os.path.basename(P.experiment_script)
+		P.experiment_name_code = P.experiment_name + '_' + hashlib.md5(os.path.abspath(P.experiment_script)).hexdigest()[:3].upper()
 		
 		P.root = os.path.abspath(config.root)
 		P.html_root = config.html_root or [os.path.join(P.root, 'html')]
@@ -80,20 +82,20 @@ class P:
 
 class Q:
 	@staticmethod
-	def retry(f):
+	def retry(f, stderr):
 		def safe_f(*args, **kwargs):
 			while True:
 				try:
 					return f(*args, **kwargs)
 				except subprocess.CalledProcessError, err:
-					print >> sys.stderr, '\nRetrying. Got CalledProcessError while calling %s:\nreturncode: %d\ncmd: %s\noutput: %s\n\n' % (f, err.returncode, err.cmd, err.output)
-					time.sleep(config.sleep_between_queue_checks)
+					print >> (stderr or sys.stderr), '\nRetrying. Got CalledProcessError while calling %s:\nreturncode: %d\ncmd: %s\noutput: %s\n\n' % (f, err.returncode, err.cmd, err.output)
+					time.sleep(config.seconds_between_queue_checks)
 					continue
 		return safe_f
 
 	@staticmethod
 	def get_jobs(job_name_prefix, stderr = None):
-		return [int(elem.getElementsByTagName('JB_job_number')[0].firstChild.data) for elem in xml.dom.minidom.parseString(Q.retry(subprocess.check_output)(['qstat', '-xml'], stderr = stderr)).documentElement.getElementsByTagName('job_list') if elem.getElementsByTagName('JB_name')[0].firstChild.data.startswith(job_name_prefix)]
+		return [int(elem.getElementsByTagName('JB_job_number')[0].firstChild.data) for elem in xml.dom.minidom.parseString(Q.retry(subprocess.check_output, stderr = stderr)(['qstat', '-xml'], stderr = stderr)).documentElement.getElementsByTagName('job_list') if elem.getElementsByTagName('JB_name')[0].firstChild.data.startswith(job_name_prefix)]
 	
 	@staticmethod
 	def submit_job(sgejob_file, sgejob_name, stderr = None):
@@ -108,30 +110,21 @@ class Q:
 	@staticmethod
 	def delete_jobs(jobs, stderr = None):
 		if jobs:
-			Q.retry(subprocess.check_call)(['qdel'] + map(str, jobs), stdout = stderr, stderr = stderr)
+			Q.retry(subprocess.check_call, stderr = stderr)(['qdel'] + map(str, jobs), stdout = stderr, stderr = stderr)
 
-class Path:
-	def __init__(self, path_parts, domakedirs = False, isoutput = False):
-		path_parts = path_parts if isinstance(path_parts, tuple) else (path_parts, )
-		assert all([part != None for part in path_parts])
-	
-		self.string = os.path.join(*map(str, path_parts))
-		self.domakedirs = domakedirs
-		self.isoutput = isoutput
+class Path(str):
+	def __new__(cls, *path_parts, **kwargs):
+		assert all(path_parts)
+		res = str.__new__(cls, os.path.join(*map(str, path_parts)))
+		res.domakedirs = kwargs.pop('domakedirs', False)
+		return res
 
 	def join(self, *path_parts):
-		assert all([part != None for part in path_parts])
-
-		return Path(os.path.join(self.string, *map(str, path_parts)))
+		assert all(path_parts)
+		return Path(os.path.join(self, *map(str, path_parts)))
 
 	def makedirs(self):
-		return Path(self.string, domakedirs = True, isoutput = self.isoutput)
-
-	def output(self):
-		return Path(self.string, domakedirs = self.domakedirs, isoutput = True)
-
-	def __str__(self):
-		return self.string
+		return Path(self, domakedirs = True)
 
 class Job:
 	def __init__(self, name, executable, env, cwd, group, dependencies):
@@ -149,7 +142,6 @@ class Job:
 
 class Group:
 	def __init__(self, name, queue = None, parallel_jobs = None, mem_lo_gb = None, mem_hi_gb = None, source = [], path = [], ld_library_path = [], env = {}):
-		#TODO: move defaults to generation stage
 		self.name = name
 		self.qualified_name = '/%s' % name
 		self.queue = queue or config.queue
@@ -347,7 +339,13 @@ def info(e = None, xpath = None, html = False, print_html_report_location = True
 				</script>
 
 				<script type="text/x-jsrender" id="tmplDetails">
-					<h3><a data-toggle="collapse" data-target=".extended-stats">stats &amp; config</a></h3>
+					<h3>
+						{{if ~sortedkeys(stats, ~stats_keys_reduced).length == 0 }}
+							stats &amp; config
+						{{else}}
+							<a data-toggle="collapse" data-target=".extended-stats">stats &amp; config</a>
+						{{/if}}
+					</h3>
 					<table class="table table-striped">
 						{{for ~stats_keys_reduced ~env=stats tmpl="#tmplEnvStats" ~apply_format=true /}}
 						{{for ~sortedkeys(stats, ~stats_keys_reduced) ~env=stats tmpl="#tmplEnvStats" ~apply_format=true ~row_class="collapse extended-stats" /}}
@@ -438,7 +436,7 @@ def info(e = None, xpath = None, html = False, print_html_report_location = True
 		<nav class="navbar navbar-default navbar-fixed-bottom" role="navigation">
 			<div class="container">
 				<div class="row">
-					<h4 class="col-sm-offset-4 col-sm-4">generated at %s</h4>
+					<h4 class="col-sm-offset-4 col-sm-4 text-center text-muted">generated at %s</h4>
 				</div>
 			</div>
 		</nav>
@@ -499,8 +497,6 @@ def info(e = None, xpath = None, html = False, print_html_report_location = True
 
 	if e == None:
 		e = init()
-		for job in e.jobs:
-			job.status = Magic(P.read_or_empty(P.joblogfiles(job)[1])).status() or job.status
 
 	sgejoblogfiles = lambda group: [P.sgejoblogfiles(group, sgejob_idx) for sgejob_idx in range(len(group.jobs))]
 	sgejobfile = lambda group: [P.sgejobfile(group, sgejob_idx) for sgejob_idx in range(len(group.jobs))]
@@ -541,15 +537,15 @@ def info(e = None, xpath = None, html = False, print_html_report_location = True
 		'stdout_path' : P.explogfiles()[0],
 		'stderr' : exp_job_logs[e][1].stderr, 
 		'stderr_path' : P.explogfiles()[1],
-		'script' : P.read_or_empty(P.exp_py), 
-		'script_path' : os.path.abspath(P.exp_py),
+		'script' : P.read_or_empty(P.experiment_script), 
+		'script_path' : os.path.abspath(P.experiment_script),
 		'rcfile' : P.read_or_empty(P.rcfile) if P.rcfile != None else None,
 		'rcfile_path' : P.rcfile,
 		'environ' : exp_job_logs[e][1].environ(),
 		'env' : config.env,
 		'stats' : merge_dicts([{
 			'experiment_root' : P.experiment_root,
-			'exp_py' : os.path.abspath(P.exp_py),
+			'experiment_script' : os.path.abspath(P.experiment_script),
 			'rcfile' : P.rcfile,
 			'name_code' : e.name_code, 
 			'html_root' : P.html_root, 
@@ -598,16 +594,16 @@ def info(e = None, xpath = None, html = False, print_html_report_location = True
 			with open(os.path.join(html_dir, P.html_report_file_name), 'w') as f:
 				f.write(HTML_PATTERN % (e.name_code, P.project_page, time.strftime(config.strftime), report_json))
 	else:
-		def strip(d):
-			for strip_key in ['stdout', 'stderr', 'script', 'rcfile']:
-				if strip_key in d:
-					d[strip_key] = '<skipped>'
-			for strip_key in ['jobs', 'groups']:
-				if strip_key in d:
-					d[strip_key] = '(%d elements) %s' % (len(d[strip_key]), [elem['qualified_name'] for elem in d[strip_key]])
+		def truncate(d):
+			for truncate_key in ['stdout', 'stderr', 'script', 'rcfile']:
+				if truncate_key in d:
+					d[truncate_key] = '<skipped>'
+			for truncate_key in ['jobs', 'groups']:
+				if truncate_key in d:
+					d[truncate_key] = '(%d elements) %s' % (len(d[truncate_key]), [elem['qualified_name'] for elem in d[truncate_key]])
 			return d
 		selected = ([elem for elem in (report['jobs'] + report['groups'] + [report]) if elem['qualified_name'] == xpath] or [{'error' : 'not found'} % xpath])[0]
-		print json.dumps(strip(selected), default = str, indent = 2, sort_keys = True)
+		print json.dumps(truncate(selected), default = str, indent = 2, sort_keys = True)
 
 def clean():
 	if os.path.exists(P.experiment_root):
@@ -618,14 +614,14 @@ def stop(stderr = None):
 	Q.delete_jobs(Q.get_jobs(P.experiment_name_code, stderr = stderr), stderr = stderr)
 	while len(Q.get_jobs(P.experiment_name_code), stderr = stderr) > 0:
 		print '%d jobs are still not deleted. Sleeping...' % len(Q.get_jobs(P.experiment_name_code, stderr = stderr))
-		time.sleep(config.sleep_between_queue_checks)
+		time.sleep(config.seconds_between_queue_checks)
 	print 'Done.\n'
 	
 def init():
-	e = Experiment(os.path.basename(P.exp_py), P.experiment_name_code)
+	e = Experiment(os.path.basename(P.experiment_script), P.experiment_name_code)
 	globals_mod = globals().copy()
 	globals_mod.update({m : getattr(e, m) for m in dir(e)})
-	exec open(P.exp_py, 'r').read() in globals_mod, globals_mod
+	exec open(P.experiment_script, 'r').read() in globals_mod, globals_mod
 
 	def makedirs_if_does_not_exist(d):
 		if not os.path.exists(d):
@@ -639,6 +635,9 @@ def init():
 		makedirs_if_does_not_exist(P.jobdir(group))
 		makedirs_if_does_not_exist(P.sgejobdir(group))
 	
+	for job in e.jobs:
+		job.status = Magic(P.read_or_empty(P.joblogfiles(job)[1])).status() or job.status
+
 	return e
 
 def run(dry, notify, locally):
@@ -651,7 +650,7 @@ def run(dry, notify, locally):
 		print intro_msg(P.locally_generated_script)
 		with open(P.locally_generated_script, 'w') as f:
 			f.write('#! /bin/bash\n')
-			f.write('#  this is a stand-alone script generated from "%s"\n\n' % P.exp_py)
+			f.write('#  this is a stand-alone script generated from "%s"\n\n' % P.experiment_script)
 			for job in e.jobs:
 				f.write('\n'.join(['('] + map(lambda l: '\t' + l, generate_job_bash_script_lines(job)) + [')', '', '']))
 		return
@@ -745,7 +744,7 @@ def run(dry, notify, locally):
 
 	def wait_if_more_jobs_than(num_jobs):
 		while len(Q.get_jobs(e.name_code, stderr = experiment_stderr_file)) > num_jobs:
-			time.sleep(config.sleep_between_queue_checks)
+			time.sleep(config.seconds_between_queue_checks)
 			update_status()
 		update_status()
 
@@ -780,18 +779,28 @@ def log(xpath, stdout = True, stderr = True):
 	subprocess.call('cat "%s" | less' % '" "'.join(log_paths), shell = True)
 
 def unhandled_exception_hook(exc_type, exc_value, exc_traceback):
-	formatted_exception_message = '\n'.join([
-		'Unhandled exception occured!',
-		'',
-		'If it is not a "No space left on device", please consider filing a bug report at %s' % P.bugreport_page,
-		'Please paste the stack trace below into the issue.',
+	formatted_exception_message = '\n'.join(
+		([
+			'No disk space left on device!',
+			'',
+			'Check that the following directories are writable:'] + 
+			[P.experiment_root] +
+			P.html_dir +
+			['', 'The stack trace is below.']
+		if isinstance(exc_value, IOError) and exc_value.errno == errno.ENOSP else
+		[
+			'Unhandled exception occured!',
+			'',
+			'Please consider filing a bug report at %s' % P.bugreport_page,
+			'Please paste the stack trace below into the issue.',
+		]) + [
 		'',
 		'==STACK_TRACE_BEGIN==',
 		'',
 		''.join(traceback.format_exception(exc_type, exc_value, exc_traceback)),
+		'',
 		'===STACK_TRACE_END==='
 	])
-
 	print >> sys.stderr, formatted_exception_message
 	
 	if unhandled_exception_hook.notification_hook_on_error:
@@ -804,7 +813,7 @@ if __name__ == '__main__':
 	sys.excepthook = unhandled_exception_hook
 
 	common_parent = argparse.ArgumentParser(add_help = False)
-	common_parent.add_argument('exp_py')
+	common_parent.add_argument('experiment_script')
 
 	gen_parent = argparse.ArgumentParser(add_help = False)
 	gen_parent.add_argument('--queue')
@@ -819,7 +828,8 @@ if __name__ == '__main__':
 	run_parent.add_argument('--notification_command')
 	run_parent.add_argument('--strftime')
 	run_parent.add_argument('--max_stdout_size', type = int)
-	run_parent.add_argument('--sleep_between_queue_checks', type = int)
+	run_parent.add_argument('--seconds_between_queue_checks', type = int)
+	run_parent.add_argument('--seconds_before_automatic_stopping', type = int)
 	
 	gen_run_parent = argparse.ArgumentParser(add_help = False)
 	gen_run_parent.add_argument('-v', dest = 'env', action = 'append', default = [])
@@ -870,11 +880,11 @@ if __name__ == '__main__':
 			else:
 				setattr(config, k, arg)
 
-	P.init(args.pop('exp_py'), rcfile)
+	P.init(args.pop('experiment_script'), rcfile)
 	try:
 		cmd(**args)
 	except KeyboardInterrupt:
 		print 'Quitting (Ctrl+C pressed). To stop jobs:'
 		print ''
-		print '%s stop "%s"' % (__tool_name__, P.exp_py)
+		print '%s stop "%s"' % (__tool_name__, P.experiment_script)
 		print ''
