@@ -1,7 +1,9 @@
 import os
 import re
 import sys
+import imp
 import math
+import copy
 import json
 import time
 import errno
@@ -9,33 +11,12 @@ import shutil
 import hashlib
 import argparse
 import traceback
+import functools
 import itertools
 import subprocess
 import xml.dom.minidom
 
 __tool_name__ = 'vosges'
-
-class config:
-	__items__ = staticmethod(lambda: [(k, v) for k, v in vars(config).items() if '__' not in k])
-
-	root = '.' + __tool_name__
-	html_root = []
-	html_root_alias = None
-	notification_command = None
-	strftime = '%d/%m/%Y %H:%M:%S'
-	max_stdout_size = 2048
-	seconds_between_queue_checks = 2.0
-	seconds_before_automatic_stopping = 10.0
-
-	queue = None
-	parallel_jobs = 4
-	mem_lo_gb = 10.0
-	mem_hi_gb = 64.0
-
-	source = []
-	path = []
-	ld_library_path = []
-	env = {}
 
 class P:
 	project_page = 'http://github.com/vadimkantorov/%s' % __tool_name__
@@ -61,9 +42,9 @@ class P:
 		return ''
 
 	@staticmethod
-	def init(experiment_script, rcfile):
+	def init(config, experiment_script):
 		P.experiment_script = experiment_script
-		P.rcfile = os.path.abspath(rcfile)
+		P.rcfile = os.path.abspath(config.rcfile)
 		P.locally_generated_script = os.path.abspath(os.path.basename(experiment_script) + '.generated.sh')
 		P.experiment_name = os.path.basename(P.experiment_script)
 		P.experiment_name_code = P.experiment_name + '_' + hashlib.md5(os.path.abspath(P.experiment_script)).hexdigest()[:3].upper()
@@ -126,117 +107,31 @@ class Path(str):
 	def makedirs(self):
 		return Path(self, domakedirs = True)
 
-class Job:
-	def __init__(self, name, executable, env, cwd, group, dependencies):
-		self.name = name
-		self.executable = executable
-		self.env = env
-		self.cwd = cwd
-		self.group = group
-		self.dependencies = dependencies
-		self.status = ExecutionStatus.waiting
-		self.qualified_name = '/%s/%s' % (group.name, name)
-
-	def get_used_paths(self):
-		return [v for k, v in sorted(self.env.items()) if isinstance(v, Path)] + [Path(self.cwd)] + map(Path, self.executable.get_used_paths())
-
-class Group:
-	def __init__(self, name, queue = None, parallel_jobs = None, mem_lo_gb = None, mem_hi_gb = None, source = [], path = [], ld_library_path = [], env = {}):
-		self.name = name
-		self.qualified_name = '/%s' % name
-		self.queue = queue or config.queue
-		self.parallel_jobs = parallel_jobs or config.parallel_jobs
-		self.mem_lo_gb = mem_lo_gb or config.mem_lo_gb
-		self.mem_hi_gb = mem_hi_gb or config.mem_hi_gb
-
-		self.source = config.source + source
-		self.path = config.path + path
-		self.ld_library_path = config.ld_library_path + ld_library_path
-		self.env = dict(config.env.items() + env.items())
-
-		self.jobs = []
-
 class ExecutionStatus:
 	waiting = 'waiting'
+	success = 'success'
 	submitted = 'submitted'
 	running = 'running'
-	success = 'success'
+	canceled = 'canceled'
 	error = 'error'
 	killed = 'killed'
-	canceled = 'canceled'
 
 	failed = [error, killed, canceled]
 	status_update_pending = [submitted, running]
-	
-	@staticmethod
-	def calculate_aggregate_status(status_list):
-		conditions = {
-			ExecutionStatus.waiting : [],
-			ExecutionStatus.submitted : [ExecutionStatus.waiting, ExecutionStatus.success],
-			ExecutionStatus.running : [ExecutionStatus.waiting, ExecutionStatus.submitted, ExecutionStatus.success],
-			ExecutionStatus.success : [],
-			ExecutionStatus.killed : None,
-			ExecutionStatus.error : None,
-			ExecutionStatus.canceled: [ExecutionStatus.waiting]
-		}
 
-		return [status for status, extra_statuses in conditions.items() if (status in status_list) and (extra_statuses == None or all([s in [status] + extra_statuses for s in status_list]))][0]
+	domination_lattice = {
+		waiting : [],
+		success : [],
+		submitted : [waiting, success],
+		running : [waiting, submitted, success],
+		canceled: [waiting, submitted, success, running],
+		error : [waiting, submitted, running, success, canceled],
+		killed : [waiting, submitted, running, success, canceled, error]
+	}
 
-class Executable:
-	def __init__(self, executor, command_line_options, script_path, script_args):
-		self.executor = executor
-		self.command_line_options = command_line_options
-		self.script_path = script_path
-		self.script_args = script_args
-	
-	def get_used_paths(self):
-		return [self.script_path]
-
-class Experiment:
-	def __init__(self, name, name_code):
-		self.name = name
-		self.name_code = name_code
-		self.jobs = []
-		self.groups = []
-	
-	def schedule(self, executable, name = None, env = {}, cwd = os.getcwd(), group = None, dependencies = []):
-		normalize_name = lambda name: '_'.join(map(str, name)) if isinstance(name, tuple) else str(name)
-		
-		name = normalize_name(name) if name != None else str([job.group for job in self.jobs].count(group))
-		group = group if isinstance(group, Group) else (self.find(group) or Group(group))
-		dependencies = [dep if isinstance(dep, Job) or isinstance(dep, Group) else self.find(dep) if isinstance(dep, str) else self.find('/%s/%s' % tuple(map(normalize_name, dep))) for dep in dependencies]
-
-		if group not in self.groups:
-			self.groups.append(group)
-
-		job = Job(name, executable, env, cwd, group, dependencies)
-		group.jobs.append(job)
-		self.jobs.append(job)
-		return job
-
-	def find(self, xpath):
-		res = [self] if xpath == '/' else []
-		res += [group for group in self.groups if group.qualified_name == xpath]
-		res += [job for job in self.jobs if job.qualified_name == xpath]
-		return (res or [None])[0]
-
-	def status(self, obj = None):
-		return ExecutionStatus.calculate_aggregate_status([job.status for job in self.jobs if job == obj or job.group == obj or obj == None])
-
-	def bash(self, script_path, script_args = '', command_line_options = ''):
-		return Executable('bash', script_path = script_path, command_line_options = command_line_options, script_args = script_args)
-
-	def experiment_name(self):
-		return self.name
+	reduce = staticmethod(lambda acc, cur: [dom for dom, sub in ExecutionStatus.domination_lattice.items() if cur == dom and acc in sub + [dom]][0])
 
 class Magic:
-	prefix = '%' + __tool_name__
-	class Action:
-		stats = 'stats'
-		environ = 'environ'
-		results = 'results'
-		status = 'status'
-
 	def __init__(self, stderr):
 		self.stderr = stderr
 	
@@ -248,24 +143,96 @@ class Magic:
 				print >> sys.stderr, 'Error parsing json. Action: %s. Stderr:\n%s' % (action, self.stderr)
 				return default
 		return map(safe_json_loads, re.findall('%s %s (.+)$' % (Magic.prefix, action), self.stderr, re.MULTILINE))
-
-	def stats(self):
-		return dict(itertools.chain(*map(dict.items, self.findall_and_load_arg(Magic.Action.stats) or [{}])))
-
-	def environ(self):
-		return (self.findall_and_load_arg(Magic.Action.environ) or [{}])[0]
-
-	def results(self):
-		return self.findall_and_load_arg(Magic.Action.results)
-
-	def status(self):
-		return (self.findall_and_load_arg(Magic.Action.status, default = None) or [None])[-1]
-
-	@staticmethod
-	def echo(action, arg):
-		return '%s %s %s' % (Magic.prefix, action, json.dumps(arg))
 	
-def info(e = None, xpath = None, html = False, print_html_report_location = True):
+	prefix = '%' + __tool_name__
+
+	action_stats = 'stats'
+	action_environ = 'environ'
+	action_results = 'results'
+	action_status = 'status'
+
+	echo = staticmethod(lambda action, arg: '%s %s %s' % (Magic.prefix, action, json.dumps(arg)))
+	stats = lambda self: dict(itertools.chain(*map(dict.items, self.findall_and_load_arg(Magic.action_stats) or [{}])))
+	environ = lambda self: (self.findall_and_load_arg(Magic.action_environ) or [{}])[0]
+	results = lambda self: self.findall_and_load_arg(Magic.action_results)
+	status = lambda self: (self.findall_and_load_arg(Magic.action_status, default = None) or [None])[-1]
+
+class Executable:
+	def __init__(self, executor, script_path = '', script_args = '', command_line_options = ''):
+		self.executor = executor
+		self.command_line_options = command_line_options
+		self.script_path = script_path
+		self.script_args = script_args
+
+	interpreter = staticmethod(lambda *args, **kwargs: functools.partial(Executable, *args, **kwargs))
+
+class JobOptions:
+	def __init__(self, executable = None, cwd = None, queue = None, parallel_jobs = None, mem_lo_gb = None, mem_hi_gb = None, source = [], path = [], ld_library_path = [], env = {}, parent = None, dependencies = [], **ignored):
+		self.dependencies = dependencies
+		self.executable = executable or (parent and parent.executable)
+		self.cwd = cwd or (parent and parent.cwd)
+		self.queue = queue or (parent and parent.queue)
+		self.parallel_jobs = parallel_jobs or (parent and parent.parallel_jobs)
+		self.mem_lo_gb = mem_lo_gb or (parent and parent.mem_lo_gb)
+		self.mem_hi_gb = mem_hi_gb or (parent and parent.mem_hi_gb)
+
+		self.source = source + (parent and parent.source or [])
+		self.path = path or (parent and parent.path or [])
+		self.ld_library_path = ld_library_path or (parent and parent.ld_library_path or [])
+		self.env = dict((parent and parent.env or {}).items() + env.items())
+
+class JobGroup(JobOptions):
+	def __init__(self, name, **kwargs):
+		JobOptions.__init__(self, **kwargs)
+		self.name = name
+		self.qualified_name = '/' + name
+		self.jobs = []
+
+class Job(JobOptions):
+	def __init__(self, name, group, **kwargs):
+		JobOptions.__init__(self, parent = group, **kwargs)
+		JobOptions.__init__(self, parent = config.default_job_options, **vars(self))
+		self.name = name
+		self.qualified_name = group.qualified_name + '/' + name
+		self.group = group
+		self.status = ExecutionStatus.waiting
+
+class Experiment:
+	def __init__(self, name):
+		self.experiment_name = name
+		self.qualified_name = '/'
+		self.jobs = []
+		self.groups = []
+
+	bash = Executable.interpreter('bash')
+
+	normalize_name = staticmethod(lambda name: '_'.join(map(str, name)) if isinstance(name, tuple) else str(name))
+	resolve_dependency = lambda self, dep: dep if isinstance(dep, Job) or isinstance(dep, JobGroup) else self.find(dep) if isinstance(dep, str) else self.find('/%s/%s' % tuple(map(Experiment.normalize_name, dep)))
+
+	def job(self, executable, name = None, group = None, dependencies = [], **kwargs):
+		group = group if isinstance(group, JobGroup) else self.group(group)
+		name = Experiment.normalize_name(name or str([job.group for job in self.jobs].count(group)))
+
+		job = Job(name, group, executable = executable, dependencies = map(self.resolve_dependency, dependencies), **kwargs)
+		self.jobs.append(job)
+		group.jobs.append(job)
+
+		return job
+
+	def group(self, name = None, dependencies = [], **kwargs):
+		name = Experiment.normalize_name(name or str(self.groups.count(group)))
+		group = self.find(name) or JobGroup(name, dependencies = map(self.resolve_dependency, dependencies), **kwargs)
+		if group not in self.groups:
+			self.groups.append(group)
+		return group
+	
+	def find(self, xpath):
+		return (filter(lambda obj: obj.qualified_name == '/' + xpath.lstrip('/'), self.jobs + self.groups + [self]) or [None])[0]
+
+	def status(self, obj = None):
+		return reduce(ExecutionStatus.reduce, [job.status for job in self.jobs if job == obj or job.group == obj or obj == None])
+
+def info(config, e = None, xpath = None, html = False, print_html_report_location = True):
 	HTML_PATTERN = '''
 <!DOCTYPE html>
 
@@ -356,7 +323,7 @@ def info(e = None, xpath = None, html = False, print_html_report_location = True
 						{{include tmpl="#tmplModal" ~type=type ~path=path ~name="results: " + name ~value=value id="results-" + #index  /}}
 					{{else}}
 						<h3>results</h3>
-						<pre class="pre-scrollable">no results provided</pre>
+						<pre class="pre-scrollable">N/A</pre>
 					{{/for}}
 					{{/if}}
 
@@ -395,7 +362,7 @@ def info(e = None, xpath = None, html = False, print_html_report_location = True
 				<script type="text/x-jsrender" id="tmplModal">
 					<h3><a data-toggle="modal" data-target="#full-screen-{{:~id}}">{{>~name}}</a></h3>
 					{{if ~type == 'text'}}
-					<pre class="pre-scrollable {{:~preview_class}}">{{>~value || "empty so far"}}</pre>
+					<pre class="pre-scrollable {{:~preview_class}}">{{>~value || "N/A"}}</pre>
 					{{else ~type == 'iframe'}}
 					<div class="embed-responsive embed-responsive-16by9 {{:~preview_class}}">
 						<iframe src="{{:~path}}"></iframe>
@@ -471,7 +438,7 @@ def info(e = None, xpath = None, html = False, print_html_report_location = True
 							name = name + ' (Gb)'
 							value = (value / 1024 / 1024).toFixed(1);
 						}
-						return String(return_name ? name : no_value ? '' : value);
+						return return_name ? name : no_value ? '' : ($.type(value) == 'string' ? value : JSON.stringify(value));
 					}
 				});
 
@@ -496,14 +463,12 @@ def info(e = None, xpath = None, html = False, print_html_report_location = True
 '''
 
 	if e == None:
-		e = init()
+		e = init(config)
 
 	sgejoblogfiles = lambda group: [P.sgejoblogfiles(group, sgejob_idx) for sgejob_idx in range(len(group.jobs))]
 	sgejobfile = lambda group: [P.sgejobfile(group, sgejob_idx) for sgejob_idx in range(len(group.jobs))]
 	
 	truncate_stdout = lambda stdout: stdout[:config.max_stdout_size / 2] + '\n\n[%d characters skipped]\n\n' % (len(stdout) - 2 * (config.max_stdout_size / 2)) + stdout[-(config.max_stdout_size / 2):] if stdout != None and len(stdout) > config.max_stdout_size else stdout
-	merge_dicts = lambda dicts: reduce(lambda x, y: dict(x.items() + y.items()), dicts)
-	
 	exp_job_logs = {obj : (P.read_or_empty(log_paths[0]), Magic(P.read_or_empty(log_paths[1]))) for obj, log_paths in [(e, P.explogfiles())] + [(job, P.joblogfiles(job)) for job in e.jobs]}
 
 	def put_extra_job_stats(report_job):
@@ -532,7 +497,7 @@ def info(e = None, xpath = None, html = False, print_html_report_location = True
 
 	report = {
 		'qualified_name' : '/',
-		'name' : e.name, 
+		'name' : e.experiment_name, 
 		'stdout' : exp_job_logs[e][0], 
 		'stdout_path' : P.explogfiles()[0],
 		'stderr' : exp_job_logs[e][1].stderr, 
@@ -542,23 +507,24 @@ def info(e = None, xpath = None, html = False, print_html_report_location = True
 		'rcfile' : P.read_or_empty(P.rcfile) if P.rcfile != None else None,
 		'rcfile_path' : P.rcfile,
 		'environ' : exp_job_logs[e][1].environ(),
-		'env' : config.env,
-		'stats' : merge_dicts([{
+		'env' : config.default_job_options.env,
+		'stats' : dict({
 			'experiment_root' : P.experiment_root,
 			'experiment_script' : os.path.abspath(P.experiment_script),
 			'rcfile' : P.rcfile,
-			'name_code' : e.name_code, 
-			'html_root' : P.html_root, 
-			'argv_joined' : ' '.join(['"%s"' % arg if ' ' in arg else arg for arg in sys.argv])}, 
-			{'config.' + k : v for k, v in config.__items__()},
-			exp_job_logs[e][1].stats()
-		]),
+			'name_code' : P.experiment_name_code, 
+			'html_root' : P.html_root,
+			'html_root_alias' : P.html_root_alias,
+			'argv_joined' : ' '.join(['"%s"' % arg if ' ' in arg else arg for arg in sys.argv])}.items() +
+			{'default_job_options.' + k : v for k, v in vars(config.default_job_options).items() if v != config.default_job_options}.items() +
+			exp_job_logs[e][1].stats().items()
+		),
 		'groups' : [put_extra_group_stats({
 			'name' : group.name,
 			'qualified_name' : group.qualified_name, 
-			'stdout' : '\n'.join(map(P.read_or_empty, zip(*sgejoblogfiles(group))[0])),
+			'stdout' : '\n'.join(map(P.read_or_empty, zip(*sgejoblogfiles(group))[0])).strip(),
 			'stdout_path' : '\n'.join(zip(*sgejoblogfiles(group))[0]),
-			'stderr' : '\n'.join(map(P.read_or_empty, zip(*sgejoblogfiles(group))[1])),
+			'stderr' : '\n'.join(map(P.read_or_empty, zip(*sgejoblogfiles(group))[1])).strip(),
 			'stderr_path' : '\n'.join(zip(*sgejoblogfiles(group))[1]),
 			'env' : group.env,
 			'script' : '\n'.join(map(P.read_or_empty, sgejobfile(group))),
@@ -592,7 +558,7 @@ def info(e = None, xpath = None, html = False, print_html_report_location = True
 		report_json = json.dumps(report, default = str)
 		for html_dir in P.html_root:
 			with open(os.path.join(html_dir, P.html_report_file_name), 'w') as f:
-				f.write(HTML_PATTERN % (e.name_code, P.project_page, time.strftime(config.strftime), report_json))
+				f.write(HTML_PATTERN % (P.experiment_name_code, P.project_page, time.strftime(config.strftime), report_json))
 	else:
 		def truncate(d):
 			for truncate_key in ['stdout', 'stderr', 'script', 'rcfile']:
@@ -605,11 +571,11 @@ def info(e = None, xpath = None, html = False, print_html_report_location = True
 		selected = ([elem for elem in (report['jobs'] + report['groups'] + [report]) if elem['qualified_name'] == xpath] or [{'error' : 'not found'} % xpath])[0]
 		print json.dumps(truncate(selected), default = str, indent = 2, sort_keys = True)
 
-def clean():
+def clean(config):
 	if os.path.exists(P.experiment_root):
 		shutil.rmtree(P.experiment_root)
 
-def stop(stderr = None):
+def stop(config, stderr = None):
 	print 'Stopping the experiment "%s"...' % P.experiment_name_code
 	Q.delete_jobs(Q.get_jobs(P.experiment_name_code, stderr = stderr), stderr = stderr)
 	while len(Q.get_jobs(P.experiment_name_code), stderr = stderr) > 0:
@@ -617,11 +583,10 @@ def stop(stderr = None):
 		time.sleep(config.seconds_between_queue_checks)
 	print 'Done.\n'
 	
-def init():
-	e = Experiment(os.path.basename(P.experiment_script), P.experiment_name_code)
-	globals_mod = globals().copy()
-	globals_mod.update({m : getattr(e, m) for m in dir(e)})
-	exec open(P.experiment_script, 'r').read() in globals_mod, globals_mod
+def init(config):
+	e = Experiment(os.path.basename(P.experiment_script))
+	vars(sys.modules[__tool_name__]).update({m : getattr(e, m) for m in dir(e)})
+	exec open(P.experiment_script, 'r').read() in config.experiment_script_scope
 
 	def makedirs_if_does_not_exist(d):
 		if not os.path.exists(d):
@@ -640,13 +605,14 @@ def init():
 
 	return e
 
-def run(dry, notify, locally):
-	generate_job_bash_script_lines = lambda job: ['# %s' % job.qualified_name] + ['for USED_FILE_PATH in "%s";' % '" "'.join(map(str, job.get_used_paths())), '\tif [ ! -e "$USED_FILE_PATH" ]; then echo File "$USED_FILE_PATH" does not exist; exit 1; fi;', 'done'] + list(itertools.starmap('export {0}="{1}"'.format, sorted(dict(job.group.env.items() + job.env.items()).items()))) + ['\n'.join(['source "%s"' % source for source in reversed(job.group.source)]), 'export PATH="%s:$PATH"' % ':'.join(reversed(job.group.path)) if job.group.path else '', 'export LD_LIBRARY_PATH="%s:$LD_LIBRARY_PATH"' % ':'.join(reversed(job.group.ld_library_path)) if job.group.ld_library_path else '', 'cd "%s"' % job.cwd, '%s %s "%s" %s' % (job.executable.executor, job.executable.command_line_options, job.executable.script_path, job.executable.script_args), '# end']
+def run(config, dry, notify, locally):
+	get_used_paths = lambda job: [v for k, v in sorted(job.env.items()) if isinstance(v, Path)] + [Path(job.cwd), Path(job.executable.script_path)]
+	generate_job_bash_script_lines = lambda job: ['# %s' % job.qualified_name] + ['for USED_FILE_PATH in "%s";' % '" "'.join(map(str, get_used_paths(job))), '\tif [ ! -e "$USED_FILE_PATH" ]; then echo File "$USED_FILE_PATH" does not exist; exit 1; fi;', 'done'] + list(itertools.starmap('export {0}="{1}"'.format, sorted(dict(job.group.env.items() + job.env.items()).items()))) + ['\n'.join(['source "%s"' % source for source in job.group.source]), 'export PATH="%s:$PATH"' % ':'.join(job.group.path) if job.group.path else '', 'export LD_LIBRARY_PATH="%s:$LD_LIBRARY_PATH"' % ':'.join(job.group.ld_library_path) if job.group.ld_library_path else '', 'cd "%s"' % job.cwd, '%s %s "%s" %s' % (job.executable.executor, job.executable.command_line_options, job.executable.script_path, job.executable.script_args), '# end']
 
 	intro_msg = lambda experiment_path: '%-30s %s' % ('Generating the experiment to:', experiment_path)
 
 	if locally:
-		e = init()
+		e = init(config)
 		print intro_msg(P.locally_generated_script)
 		with open(P.locally_generated_script, 'w') as f:
 			f.write('#! /bin/bash\n')
@@ -658,15 +624,15 @@ def run(dry, notify, locally):
 	if len(Q.get_jobs(P.experiment_name_code)) > 0:
 		print 'Existing jobs for the experiment "%s" will be stopped in %d seconds.' % (P.experiment_name_code, config.seconds_before_automatic_stopping)
 		time.sleep(config.seconds_before_automatic_stopping)
-		stop()
+		stop(config)
 	
 	print intro_msg(P.experiment_root)
 
-	clean()
+	clean(config)
 	
-	e = init()
+	e = init(config)
 	
-	for p in [p for job in e.jobs for p in job.get_used_paths() if p.domakedirs == True and not os.path.exists(str(p))]:
+	for p in [p for job in e.jobs for p in get_used_paths(job) if p.domakedirs == True and not os.path.exists(str(p))]:
 		os.makedirs(str(p))
 
 	for job in e.jobs:
@@ -690,18 +656,18 @@ def run(dry, notify, locally):
 					job_stderr_path = P.joblogfiles(job)[1]
 					f.write('\n'.join([
 						'# %s' % job.qualified_name,
-						'echo "' + qq(Magic.echo(Magic.Action.status, ExecutionStatus.running)) + '" > "%s"' % job_stderr_path,
-						'echo "' + qq(Magic.echo(Magic.Action.stats, {
+						'echo "' + qq(Magic.echo(Magic.action_status, ExecutionStatus.running)) + '" > "%s"' % job_stderr_path,
+						'echo "' + qq(Magic.echo(Magic.action_stats, {
 							'time_started' : "$(date +'%s')" % config.strftime,
 							'time_started_unix' : "$(date +'%s')",
 							'hostname' : '$(hostname)',
 							'qstat_job_id' : '$JOB_ID',
 							'CUDA_VISIBLE_DEVICES' : '$CUDA_VISIBLE_DEVICES'
 						})) + '" >> "%s"' % job_stderr_path,
-						'''python -c "import json, os; print('%s %s ' + json.dumps(dict(os.environ)))" >> "%s"''' % (Magic.prefix, Magic.Action.environ, job_stderr_path),
-						'''/usr/bin/time -f '%s %s {"exit_code" : %%x, "time_user_seconds" : %%U, "time_system_seconds" : %%S, "time_wall_clock_seconds" : %%e, "rss_max_kbytes" : %%M, "rss_avg_kbytes" : %%t, "page_faults_major" : %%F, "page_faults_minor" : %%R, "io_inputs" : %%I, "io_outputs" : %%O, "context_switches_voluntary" : %%w, "context_switches_involuntary" : %%c, "cpu_percentage" : "%%P", "signals_received" : %%k}' bash -e "%s" > "%s" 2>> "%s"''' % ((Magic.prefix.replace('%', '%%'), Magic.Action.stats, P.jobfile(job)) + P.joblogfiles(job)),
-						'''([ "$?" == "0" ] && (echo "%s") || (echo "%s")) >> "%s"''' % (qq(Magic.echo(Magic.Action.status, ExecutionStatus.success)), qq(Magic.echo(Magic.Action.status, ExecutionStatus.error)), job_stderr_path),
-						'echo "' + qq(Magic.echo(Magic.Action.stats, {'time_finished' : "$(date +'%s')" % config.strftime})) + '" >> "%s"' % job_stderr_path,
+						'''python -c "import json, os; print('%s %s ' + json.dumps(dict(os.environ)))" >> "%s"''' % (Magic.prefix, Magic.action_environ, job_stderr_path),
+						'''/usr/bin/time -f '%s %s {"exit_code" : %%x, "time_user_seconds" : %%U, "time_system_seconds" : %%S, "time_wall_clock_seconds" : %%e, "rss_max_kbytes" : %%M, "rss_avg_kbytes" : %%t, "page_faults_major" : %%F, "page_faults_minor" : %%R, "io_inputs" : %%I, "io_outputs" : %%O, "context_switches_voluntary" : %%w, "context_switches_involuntary" : %%c, "cpu_percentage" : "%%P", "signals_received" : %%k}' bash -e "%s" > "%s" 2>> "%s"''' % ((Magic.prefix.replace('%', '%%'), Magic.action_stats, P.jobfile(job)) + P.joblogfiles(job)),
+						'''([ "$?" == "0" ] && (echo "%s") || (echo "%s")) >> "%s"''' % (qq(Magic.echo(Magic.action_status, ExecutionStatus.success)), qq(Magic.echo(Magic.action_status, ExecutionStatus.error)), job_stderr_path),
+						'echo "' + qq(Magic.echo(Magic.action_stats, {'time_finished' : "$(date +'%s')" % config.strftime})) + '" >> "%s"' % job_stderr_path,
 						'# end',
 						''
 					]))
@@ -720,7 +686,7 @@ def run(dry, notify, locally):
 			sys.stdout.write('Executing custom notification_command. ')
 			cmd = config.notification_command.format(
 				EXECUTION_STATUS = experiment_status,
-				NAME_CODE = e.name_code, 
+				NAME_CODE = P.experiment_name_code, 
 				HTML_REPORT_URL = P.html_report_url,
 				FAILED_JOB = ([job.name for job in e.jobs if job.status in ExecutionStatus.failed] or [None])[0],
 				EXCEPTION_MESSAGE = exception_message
@@ -729,11 +695,11 @@ def run(dry, notify, locally):
 
 	def put_status(job, status):
 		with open(P.joblogfiles(job)[1], 'a') as f:
-			print >> f, Magic.echo(Magic.Action.status, status)
+			print >> f, Magic.echo(Magic.action_status, status)
 		job.status = status
 
 	def update_status():
-		active_jobs = [job for sgejob in Q.get_jobs(e.name_code, stderr = experiment_stderr_file) for job in sgejob2job[sgejob]]
+		active_jobs = [job for sgejob in Q.get_jobs(P.experiment_name_code, stderr = experiment_stderr_file) for job in sgejob2job[sgejob]]
 		for job in filter(lambda job: job.status in ExecutionStatus.status_update_pending, e.jobs):
 			job.status = Magic(P.read_or_empty(P.joblogfiles(job)[1])).status() or job.status
 			if job.status == ExecutionStatus.running and job not in active_jobs:
@@ -743,7 +709,7 @@ def run(dry, notify, locally):
 					put_status(job_to_cancel, ExecutionStatus.canceled)
 
 	def wait_if_more_jobs_than(num_jobs):
-		while len(Q.get_jobs(e.name_code, stderr = experiment_stderr_file)) > num_jobs:
+		while len(Q.get_jobs(P.experiment_name_code, stderr = experiment_stderr_file)) > num_jobs:
 			time.sleep(config.seconds_between_queue_checks)
 			update_status()
 		update_status()
@@ -751,17 +717,17 @@ def run(dry, notify, locally):
 	is_job_submittable = lambda job: job.status == ExecutionStatus.waiting and all(map(lambda dep: e.status(dep) == ExecutionStatus.success, job.dependencies))
 	unhandled_exception_hook.notification_hook = lambda exception_message: notify_if_needed(ExecutionStatus.error, exception_message)
 
-	print >> experiment_stderr_file, Magic.echo(Magic.Action.stats, {'time_started' : time.strftime(config.strftime)})
-	print >> experiment_stderr_file, Magic.echo(Magic.Action.environ, dict(os.environ))
+	print >> experiment_stderr_file, Magic.echo(Magic.action_stats, {'time_started' : time.strftime(config.strftime)})
+	print >> experiment_stderr_file, Magic.echo(Magic.action_environ, dict(os.environ))
 	while e.status() and any(map(is_job_submittable, e.jobs)):
 		job_to_submit = filter(is_job_submittable, e.jobs)[0]
 		group, sgejob_idx = job_to_submit.group, job.group.jobs.index(job_to_submit)
-		sgejob = Q.submit_job(P.sgejobfile(group, sgejob_idx), '%s_%s_%s' % (e.name_code, group.name, sgejob_idx), stderr = experiment_stderr_file)
+		sgejob = Q.submit_job(P.sgejobfile(group, sgejob_idx), '%s_%s_%s' % (P.experiment_name_code, group.name, sgejob_idx), stderr = experiment_stderr_file)
 		sgejob2job[sgejob] = [job_to_submit]
 		job_to_submit.status = ExecutionStatus.submitted
 		wait_if_more_jobs_than(config.parallel_jobs - 1)
 	wait_if_more_jobs_than(0)
-	print >> experiment_stderr_file, Magic.echo(Magic.Action.stats, {'time_finished' : time.strftime(config.strftime)})
+	print >> experiment_stderr_file, Magic.echo(Magic.action_stats, {'time_finished' : time.strftime(config.strftime)})
 
 	info(e, html = True, print_html_report_location = False)
 	
@@ -769,8 +735,8 @@ def run(dry, notify, locally):
 	print ''
 	print 'ALL OK. KTHXBAI!' if e.status() == ExecutionStatus.success else 'ERROR. QUITTING!'
 
-def log(xpath, stdout = True, stderr = True):
-	e = init()
+def log(config, xpath, stdout = True, stderr = True):
+	e = init(config)
 
 	obj = e.find(xpath)
 	log_slice = slice(0 if stdout else 1, 2 if stderr else 1)
@@ -815,33 +781,31 @@ if __name__ == '__main__':
 	common_parent = argparse.ArgumentParser(add_help = False)
 	common_parent.add_argument('experiment_script')
 
-	gen_parent = argparse.ArgumentParser(add_help = False)
-	gen_parent.add_argument('--queue')
-	gen_parent.add_argument('--mem_lo_gb', type = int)
-	gen_parent.add_argument('--mem_hi_gb', type = int)
-	gen_parent.add_argument('--parallel_jobs', type = int)
-	gen_parent.add_argument('--source', action = 'append', default = [])
-	gen_parent.add_argument('--path', action = 'append', default = [])
-	gen_parent.add_argument('--ld_library_path', action = 'append', default = [])
-	
 	run_parent = argparse.ArgumentParser(add_help = False)
+	run_parent.add_argument('--queue')
+	run_parent.add_argument('--cwd', default = os.getcwd())
+	run_parent.add_argument('--env', action = type('', (argparse.Action, ), dict(__call__ = lambda a, p, n, v, o: getattr(n, a.dest).update(dict([v.split('=')])))), default = {})
+	run_parent.add_argument('--mem_lo_gb', type = int, default = 2)
+	run_parent.add_argument('--mem_hi_gb', type = int, default = 10)
+	run_parent.add_argument('--parallel_jobs', type = int, default = 4)
+	run_parent.add_argument('--source', action = 'append', default = [])
+	run_parent.add_argument('--path', action = 'append', default = [])
+	run_parent.add_argument('--ld_library_path', action = 'append', default = [])
 	run_parent.add_argument('--notification_command')
-	run_parent.add_argument('--strftime')
-	run_parent.add_argument('--max_stdout_size', type = int)
-	run_parent.add_argument('--seconds_between_queue_checks', type = int)
-	run_parent.add_argument('--seconds_before_automatic_stopping', type = int)
+	run_parent.add_argument('--strftime', default = '%d/%m/%Y %H:%M:%S')
+	run_parent.add_argument('--max_stdout_size', type = int, default = 2048)
+	run_parent.add_argument('--seconds_between_queue_checks', type = int, default = 2)
+	run_parent.add_argument('--seconds_before_automatic_stopping', type = int, default = 10)
 	
-	gen_run_parent = argparse.ArgumentParser(add_help = False)
-	gen_run_parent.add_argument('-v', dest = 'env', action = 'append', default = [])
-	gen_run_parent.add_argument('--force', action = 'store_true')
-
-	parser = argparse.ArgumentParser(parents = [run_parent, gen_parent])
-	parser.add_argument('--rcfile', default = os.path.expanduser('~/.%src' % __tool_name__))
-	parser.add_argument('--root')
-	parser.add_argument('--html_root', action = 'append', default = [])
-	parser.add_argument('--html_root_alias')
-
+	parser_parent = argparse.ArgumentParser(parents = [run_parent], add_help = False)
+	parser_parent.add_argument('--rcfile', default = os.path.expanduser('~/.%src' % __tool_name__))
+	parser_parent.add_argument('--root', default = '.%s' % __tool_name__)
+	parser_parent.add_argument('--html_root', action = 'append', default = [])
+	parser_parent.add_argument('--html_root_alias')
+	
+	parser = argparse.ArgumentParser(parents = [parser_parent])
 	subparsers = parser.add_subparsers()
+	
 	subparsers.add_parser('stop', parents = [common_parent]).set_defaults(func = stop)
 	subparsers.add_parser('clean', parents = [common_parent]).set_defaults(func = clean)
 
@@ -857,32 +821,31 @@ if __name__ == '__main__':
 	cmd.add_argument('--html', dest = 'html', action = 'store_true')
 	cmd.set_defaults(func = info)
 	
-	cmd = subparsers.add_parser('run', parents = [common_parent, gen_parent, run_parent, gen_run_parent])
+	cmd = subparsers.add_parser('run', parents = [common_parent, run_parent])
 	cmd.set_defaults(func = run)
 	cmd.add_argument('--dry', action = 'store_true')
 	cmd.add_argument('--locally', action = 'store_true')
 	cmd.add_argument('--notify', action = 'store_true')
 	
-	args = vars(parser.parse_args())
-	rcfile, cmd = args.pop('rcfile'), args.pop('func')
+	args = copy.deepcopy(vars(parser.parse_args())) # deepcopy to make config.html_root != args.get('html_root')
 
-	if os.path.exists(rcfile):
-		exec open(rcfile).read() in globals(), globals()
+	config = parser_parent.parse_args([]) # a hack constructing the config object to be used in rcfile exec and script exec
+	config.default_job_options = JobOptions(**vars(config)) # using default values from argparse to init the config
+	
+	sys.modules[__tool_name__] = imp.new_module(__tool_name__)
+	vars(sys.modules[__tool_name__]).update(dict(config = config, Executable = Executable, Path = Path))
 
-	args['env'] = dict([k_eq_v.split('=') for k_eq_v in args.pop('env', {})])
-	for k, v in config.__items__():
-		arg = args.pop(k)
-		if arg != None:
-			if isinstance(arg, list):
-				setattr(config, k, getattr(config, k) + arg)
-			elif isinstance(arg, dict):
-				setattr(config, k, dict(getattr(config, k).items() + arg.items()))
-			else:
-				setattr(config, k, arg)
-
-	P.init(args.pop('experiment_script'), rcfile)
+	config.experiment_script_scope = {}
+	if os.path.exists(config.rcfile):
+		exec open(config.rcfile).read() in config.experiment_script_scope
+	
+	config.default_job_options = JobOptions(parent = config.default_job_options, **args) # updating config using command-line args
+	config.html_root += args.pop('html_root')
+	vars(config).update({k : args.pop(k) or v for k, v in vars(config).items() if k in args}) # removing all keys from args except the method args
+	
+	P.init(config, args.pop('experiment_script'))
 	try:
-		cmd(**args)
+		args.pop('func')(config, **args)
 	except KeyboardInterrupt:
 		print 'Quitting (Ctrl+C pressed). To stop jobs:'
 		print ''
