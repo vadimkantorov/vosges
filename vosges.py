@@ -516,7 +516,7 @@ def info(config, e = None, xpath = None, html = False, print_html_report_locatio
 			'html_root' : P.html_root,
 			'html_root_alias' : P.html_root_alias,
 			'argv_joined' : ' '.join(['"%s"' % arg if ' ' in arg else arg for arg in sys.argv])}.items() +
-			{'default_job_options.' + k : v for k, v in vars(config.default_job_options).items() if v != config.default_job_options}.items() +
+			{'default_job_options.' + k : v for k, v in vars(config.default_job_options).items()}.items() +
 			exp_job_logs[e][1].stats().items()
 		),
 		'groups' : [put_extra_group_stats({
