@@ -1,6 +1,3 @@
-# vosges
-A simple Python tool for generating and running Sun Grid Engine (SGE) jobs, with a nice HTML dashboard.
-
 # Installation
 Define the following alias in your `~/.bashrc`:
 ```
