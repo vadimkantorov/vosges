@@ -93,8 +93,6 @@ SENDGRID_TO = 'to=vadimkantorov@gmail.com'
 # To enable notification also by SMS uncomment the following line:
 # SENDGRID_TO = 'to[]=0603...@sfr.fr&amp;to[]=vadimkantorov@gmail.com' # To find your email2sms gateway you may want to look at http://mfitzp.io/list-of-email-to-sms-gateways/
 
-to[]=destination@example.com
-
 vosges.config.root = '/meleze/data2/kantorov/vosges'
 vosges.config.html_root += ['/meleze/data0/public_html/kantorov']
 vosges.config.html_root_alias = 'http://www.rocq.inria.fr/cluster-willow/kantorov'
