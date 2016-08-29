@@ -9,7 +9,7 @@ alias vosges='python2.7 <($([ -z "$(which curl)" ] && echo "wget -nv --no-check-
 
 *Requirements*: python2.7, curl/wget
 
-# Real-world experiment definition example
+# A real-world experiment definition example
 ```python
 
 import os
@@ -58,6 +58,28 @@ for seed in seeds:
         group = 'detection_map'
     )
 
+```
+
+# A real-world `~/.vosgesrc` example
+```python
+
+#! python
+
+import vosges
+
+SENDGRID_BEARER_TOKEN = 'SG.RrzhBEX....' # Large part of the token is omitted. Use your own.
+SENDGRID_FROM = 'from=vadimkantorov@gmail.com'
+SENDGRID_TO = 'to=vadimkantorov@gmail.com'
+# To enable notification also by SMS uncomment the following line:
+# SENDGRID_TO = 'to[]=0603...@sfr.fr&amp;to[]=vadimkantorov@gmail.com' # To find your email2sms gateway you may want to look at http://mfitzp.io/list-of-email-to-sms-gateways/
+
+to[]=destination@example.com
+
+vosges.config.root = '/meleze/data2/kantorov/vosges'
+vosges.config.html_root += ['/meleze/data0/public_html/kantorov']
+vosges.config.html_root_alias = 'http://www.rocq.inria.fr/cluster-willow/kantorov'
+vosges.config.notification_command = '''curl -sS -X POST https://api.sendgrid.com/api/mail.send.json -H "Authorization: Bearer %s" -d "%s" -d "%s" -d "subject=[vosges] {EXECUTION_STATUS} of experiment {NAME_CODE}" -d"text=Report is at {HTML_REPORT_URL}#{FAILED_JOB_QUALIFIED_NAME}\n\nFailed job: {FAILED_JOB_QUALIFIED_NAME}.\n\nException message:\n\n{EXCEPTION_MESSAGE}"''' % (SENDGRID_BEARER_TOKEN, SENDGRID_FROM, SENDGRID_TO)
+vosges.config.default_job_options.source += ['$HOME/install/bin/torch-activate', '$HOME/.wigwam/wigwam_activate.sh']
 ```
 
 # Commands
