@@ -107,4 +107,3 @@ vosges.config.default_job_options.source += ['$HOME/install/bin/torch-activate',
 - `vosges info`
 - `vosges clean`
 
-# Notes
