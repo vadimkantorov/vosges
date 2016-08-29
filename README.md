@@ -7,10 +7,24 @@ Define the following alias in your `~/.bashrc`:
 alias vosges='python2.7 <($([ -z "$(which curl)" ] && echo "wget -nv --no-check-certificate -O -" || echo "curl -sSk") https://raw.githubusercontent.com/vadimkantorov/vosges/master/vosges.py)'
 ```
 
-*Requirements*: python2.7, curl/wget
+*Requirements*: python2.7, curl/wget, qsub/qdel/qstat binaries
+
+# Usage
+
+Defining an experiment pipeline in vosges consists of creating a Python script, say `example.vosges.py`, that calls into a very simple vosges-provided API. The experiment can then be run and managed using vosges commands, e.g. `$ vosges run example.vosges.py`. Vosges will generate and maintain a webpage that allows experiment monitoring and displaying experiment results.
+
+The vosges API is exposed as a Python module `vosges`. The module defines the following members:
+- `vosges.experiment_name`
+- `vosges.job(...)`
+- `vosges.interpreter(...)`
+- `vosges.Path(...)`
+- `vosges.group(...)`
+- `vosges.Executable(...)`
+- `vosges.config`
 
 # A real-world experiment definition example
 ```python
+# example.vosges.py
 
 import os
 import vosges
@@ -62,7 +76,6 @@ for seed in seeds:
 
 # A real-world `~/.vosgesrc` example
 ```python
-
 #! python
 
 import vosges
