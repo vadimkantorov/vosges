@@ -19,10 +19,10 @@ src = vosges.Path(os.getcwd())
 data = vosges.Path(os.getenv('DATA_ROOT'), vosges.experiment_name)
 data_common = vosges.Path(os.getenv('DATA_COMMON_ROOT'))
 
-config.default_job_options.queue = 'gpu.q'
-config.default_job_options.path += ['/nas/matlab-2015a/bin']
-config.default_job_options.env = dict(DATA_COMMON = data_common)
-config.default_job_options.mem_hi_gb = 80
+vosges.config.default_job_options.queue = 'gpu.q'
+vosges.config.default_job_options.path += ['/nas/matlab-2015a/bin']
+vosges.config.default_job_options.env = dict(DATA_COMMON = data_common)
+vosges.config.default_job_options.mem_hi_gb = 80
 
 seeds = range(5)
 torch = vosges.interpreter('th')
