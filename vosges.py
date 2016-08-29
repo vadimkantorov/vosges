@@ -164,8 +164,6 @@ class Executable:
 		self.script_path = script_path
 		self.script_args = script_args
 
-	interpreter = staticmethod(lambda *args, **kwargs: functools.partial(Executable, *args, **kwargs))
-
 class JobOptions:
 	def __init__(self, executable = None, cwd = None, queue = None, parallel_jobs = None, mem_lo_gb = None, mem_hi_gb = None, source = [], path = [], ld_library_path = [], env = {}, parent = None, dependencies = [], **ignored):
 		self.dependencies = dependencies
@@ -204,7 +202,7 @@ class Experiment:
 		self.jobs = []
 		self.groups = []
 
-	bash = Executable.interpreter('bash')
+	interpreter = staticmethod(lambda *args, **kwargs: functools.partial(Executable, *args, **kwargs))
 
 	normalize_name = staticmethod(lambda name: '_'.join(map(str, name)) if isinstance(name, tuple) else str(name))
 	resolve_dependency = lambda self, dep: dep if isinstance(dep, Job) or isinstance(dep, JobGroup) else self.find(dep) if isinstance(dep, str) else self.find('/%s/%s' % tuple(map(Experiment.normalize_name, dep)))
@@ -682,7 +680,7 @@ def run(config, dry, notify, locally):
 	experiment_stderr_file = open(P.explogfiles()[1], 'w')
 
 	def notify_if_enabled(experiment_status, exception_message = None):
-		if notify and config.notification_command:
+		if notify:
 			sys.stdout.write('Executing custom notification_command. ')
 			cmd = config.notification_command.format(
 				EXECUTION_STATUS = experiment_status,
@@ -778,9 +776,6 @@ if __name__ == '__main__':
 	unhandled_exception_hook.notification_hook_on_error = None 
 	sys.excepthook = unhandled_exception_hook
 
-	common_parent = argparse.ArgumentParser(add_help = False)
-	common_parent.add_argument('experiment_script')
-
 	run_parent = argparse.ArgumentParser(add_help = False)
 	run_parent.add_argument('--queue')
 	run_parent.add_argument('--cwd', default = os.getcwd())
@@ -791,7 +786,7 @@ if __name__ == '__main__':
 	run_parent.add_argument('--source', action = 'append', default = [])
 	run_parent.add_argument('--path', action = 'append', default = [])
 	run_parent.add_argument('--ld_library_path', action = 'append', default = [])
-	run_parent.add_argument('--notification_command')
+	run_parent.add_argument('--notification_command', default = '''echo This is a dummy notification command, to set a custom one adjust config.notification_command or the command-line argument.''')
 	run_parent.add_argument('--strftime', default = '%d/%m/%Y %H:%M:%S')
 	run_parent.add_argument('--max_stdout_size', type = int, default = 2048)
 	run_parent.add_argument('--seconds_between_queue_checks', type = int, default = 2)
@@ -803,29 +798,37 @@ if __name__ == '__main__':
 	parser_parent.add_argument('--html_root', action = 'append', default = [])
 	parser_parent.add_argument('--html_root_alias')
 	
-	parser = argparse.ArgumentParser(parents = [parser_parent])
+	parser = argparse.ArgumentParser(parents = [parser_parent]) # separate parser to work around the config construction bug
 	subparsers = parser.add_subparsers()
 	
-	subparsers.add_parser('stop', parents = [common_parent]).set_defaults(func = stop)
-	subparsers.add_parser('clean', parents = [common_parent]).set_defaults(func = clean)
+	cmd = subparsers.add_parser('stop')
+	cmd.add_argument('experiment_script')
+	cmd.set_defaults(func = stop)
 
-	cmd = subparsers.add_parser('log', parents = [common_parent])
+	cmd = subparsers.add_parser('clean')
+	cmd.add_argument('experiment_script')
+	cmd.set_defaults(func = clean)
+
+	cmd = subparsers.add_parser('log')
+	cmd.add_argument('experiment_script')
 	cmd.add_argument('--xpath', default = '/')
 	cmd.add_argument('--stdout', action = 'store_false', dest = 'stderr')
 	cmd.add_argument('--stderr', action = 'store_false', dest = 'stdout')
 	cmd.set_defaults(func = log)
 
-	cmd = subparsers.add_parser('info', parents = [common_parent])
+	cmd = subparsers.add_parser('info')
+	cmd.add_argument('experiment_script')
 	cmd.add_argument('--xpath', default = '/')
 	parser._get_option_tuples = lambda arg_string: [] if any([subparser._get_option_tuples(arg_string) for action in parser._subparsers._actions if isinstance(action, argparse._SubParsersAction) for subparser in action.choices.values()]) else super(ArgumentParser, parser)._get_option_tuples(arg_string) # monkey patching for https://bugs.python.org/issue14365, hack inspired by https://bugs.python.org/file24945/argparse_dirty_hack.py
 	cmd.add_argument('--html', dest = 'html', action = 'store_true')
 	cmd.set_defaults(func = info)
 	
-	cmd = subparsers.add_parser('run', parents = [common_parent, run_parent])
-	cmd.set_defaults(func = run)
+	cmd = subparsers.add_parser('run', parents = [run_parent])
+	cmd.add_argument('experiment_script')
 	cmd.add_argument('--dry', action = 'store_true')
 	cmd.add_argument('--locally', action = 'store_true')
 	cmd.add_argument('--notify', action = 'store_true')
+	cmd.set_defaults(func = run)
 	
 	args = copy.deepcopy(vars(parser.parse_args())) # deepcopy to make config.html_root != args.get('html_root')
 
