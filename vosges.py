@@ -131,10 +131,7 @@ class ExecutionStatus:
 
 	reduce = staticmethod(lambda acc, cur: [dom for dom, sub in ExecutionStatus.domination_lattice.items() if cur == dom and acc in sub + [dom]][0])
 
-class Magic:
-	def __init__(self, stderr):
-		self.stderr = stderr
-	
+class Magic(str):
 	def findall_and_load_arg(self, action, default = {}):
 		def safe_json_loads(s):
 			try:
@@ -142,7 +139,7 @@ class Magic:
 			except:
 				print >> sys.stderr, 'Error parsing json. Action: %s. Stderr:\n%s' % (action, self.stderr)
 				return default
-		return map(safe_json_loads, re.findall('%s %s (.+)$' % (Magic.prefix, action), self.stderr, re.MULTILINE))
+		return map(safe_json_loads, re.findall('%s %s (.+)$' % (Magic.prefix, action), self, re.MULTILINE))
 	
 	prefix = '%' + __tool_name__
 
