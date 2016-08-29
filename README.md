@@ -1,3 +1,13 @@
+Vosges is a simple Python tool for generating and running Sun Grid Engine (SGE) jobs, with a nice HTML dashboard.
+
+# Features
+- Neat mobile-ready HTML experiment monitoring dashboard; the dashboard will display experiment progress and all job logs
+- Notification of experiment results by e-mail or SMS (free registration with SendGrid required)
+- Easy experiment definition in Python
+- Command-line experiment management interface
+- Experiments are defined as arbitrary directed acyclic graphs (DAGs) of jobs and job groups
+- Important SGE job options can be customized, such as memory limits and log files
+
 # Installation
 Define the following alias in your `~/.bashrc`:
 ```
