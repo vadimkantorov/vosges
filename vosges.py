@@ -199,7 +199,7 @@ class Experiment:
 		self.jobs = []
 		self.groups = []
 
-	interpreter = staticmethod(lambda *args, **kwargs: functools.partial(Executable, *args, **kwargs))
+	interpreter = staticmethod(functools.partial(functools.partial)(Executable))
 
 	normalize_name = staticmethod(lambda name: '_'.join(map(str, name)) if isinstance(name, tuple) else str(name))
 	resolve_dependency = lambda self, dep: dep if isinstance(dep, Job) or isinstance(dep, JobGroup) else self.find(dep) if isinstance(dep, str) else self.find('/%s/%s' % tuple(map(Experiment.normalize_name, dep)))
