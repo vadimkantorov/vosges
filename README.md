@@ -14,7 +14,7 @@ Define the following alias in your `~/.bashrc`:
 alias vosges='python2.7 <($([ -z "$(which curl)" ] && echo "wget -nv --no-check-certificate -O -" || echo "curl -sSk") https://raw.githubusercontent.com/vadimkantorov/vosges/master/vosges.py)'
 ```
 
-*Requirements*: python2.7, curl/wget, qsub/qdel/qstat binaries
+*Requirements*: python2.7, curl or wget, qsub/qdel/qstat binaries
 
 # Usage
 
