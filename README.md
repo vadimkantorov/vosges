@@ -27,7 +27,7 @@ vosges.config.default_job_options.mem_hi_gb = 80
 seeds = range(5)
 torch = vosges.interpreter('th')
 
-for i, seed in enumerate(seeds):
+for seed in seeds:
     vosges.job(torch(src.join('train.lua'), script_args = '$MODEL'),
         env = dict(
             MODEL = src.join('model/contrastive_s.lua'),
