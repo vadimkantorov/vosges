@@ -129,7 +129,7 @@ class ExecutionStatus:
 		killed : [waiting, submitted, running, success, canceled, error]
 	}
 
-	reduce = staticmethod(lambda acc, cur: [dom for dom, sub in ExecutionStatus.domination_lattice.items() if cur == dom and acc in sub + [dom]][0])
+	reduce = staticmethod(lambda acc, cur: [[dom for dom, sub in ExecutionStatus.domination_lattice.items() if cur == dom and acc in sub + [dom]] + [acc]][0])
 
 class Magic(str):
 	def findall_and_load_arg(self, action, default = {}):
@@ -495,7 +495,7 @@ def info(config, e = None, xpath = None, html = False, print_html_report_locatio
 		'name' : e.experiment_name, 
 		'stdout' : exp_job_logs[e][0], 
 		'stdout_path' : P.explogfiles()[0],
-		'stderr' : exp_job_logs[e][1].stderr, 
+		'stderr' : exp_job_logs[e][1], 
 		'stderr_path' : P.explogfiles()[1],
 		'script' : P.read_or_empty(P.experiment_script), 
 		'script_path' : os.path.abspath(P.experiment_script),
@@ -535,7 +535,7 @@ def info(config, e = None, xpath = None, html = False, print_html_report_locatio
 			'group' : job.group.name,
 			'stdout' : truncate_stdout(exp_job_logs[job][0]),
 			'stdout_path' : P.joblogfiles(job)[0],
-			'stderr' : exp_job_logs[job][1].stderr, 
+			'stderr' : exp_job_logs[job][1], 
 			'stderr_path' : P.joblogfiles(job)[1],
 			'script' : P.read_or_empty(P.jobfile(job)),
 			'script_path' : P.jobfile(job),
@@ -602,7 +602,7 @@ def init(config):
 
 def run(config, dry, notify, locally):
 	get_used_paths = lambda job: [v for k, v in sorted(job.env.items()) if isinstance(v, Path)] + [Path(job.cwd), Path(job.executable.script_path)]
-	generate_job_bash_script_lines = lambda job: ['# %s' % job.qualified_name] + ['for USED_FILE_PATH in "%s";' % '" "'.join(map(str, get_used_paths(job))), '\tif [ ! -e "$USED_FILE_PATH" ]; then echo File "$USED_FILE_PATH" does not exist; exit 1; fi;', 'done'] + list(itertools.starmap('export {0}="{1}"'.format, sorted(dict(job.group.env.items() + job.env.items()).items()))) + ['\n'.join(['source "%s"' % source for source in job.group.source]), 'export PATH="%s:$PATH"' % ':'.join(job.group.path) if job.group.path else '', 'export LD_LIBRARY_PATH="%s:$LD_LIBRARY_PATH"' % ':'.join(job.group.ld_library_path) if job.group.ld_library_path else '', 'cd "%s"' % job.cwd, '%s %s "%s" %s' % (job.executable.executor, job.executable.command_line_options, job.executable.script_path, job.executable.script_args), '# end']
+	generate_job_bash_script_lines = lambda job: ['# %s' % job.qualified_name] + ['for USED_FILE_PATH in "%s"; do' % '" "'.join(map(str, get_used_paths(job))), '\tif [ ! -e "$USED_FILE_PATH" ]; then echo File "$USED_FILE_PATH" does not exist; exit 1; fi', 'done'] + list(itertools.starmap('export {0}="{1}"'.format, sorted(dict(job.group.env.items() + job.env.items()).items()))) + ['\n'.join(['source "%s"' % source for source in job.source + job.group.source]), 'export PATH="%s:$PATH"' % ':'.join(job.path + job.group.path), 'export LD_LIBRARY_PATH="%s:$LD_LIBRARY_PATH"' % ':'.join(job.ld_library_path + job.group.ld_library_path), 'cd "%s"' % job.cwd, '%s %s "%s" %s' % (job.executable.executor, job.executable.command_line_options, job.executable.script_path, job.executable.script_args), '# end']
 
 	intro_msg = lambda experiment_path: '%-30s %s' % ('Generating the experiment to:', experiment_path)
 
@@ -640,8 +640,8 @@ def run(config, dry, notify, locally):
 			with open(P.sgejobfile(group, sgejob_idx), 'w') as f:
 				f.write('\n'.join([
 					'#$ -S /bin/bash',
-					'#$ -l mem_req=%.2fG' % group.mem_lo_gb,
-					'#$ -l h_vmem=%.2fG' % group.mem_hi_gb,
+					'#$ -l mem_req=%.2fG' % (group.mem_lo_gb or config.default_job_options.mem_lo_gb),
+					'#$ -l h_vmem=%.2fG' % (group.mem_hi_gb or config.default_job_options.mem_hi_gb),
 					'#$ -o %s -e %s\n' % P.sgejoblogfiles(group, sgejob_idx),
 					'#$ -q %s' % group.queue if group.queue else '',
 					''
@@ -667,7 +667,7 @@ def run(config, dry, notify, locally):
 						''
 					]))
 
-	info(e, html = True, print_html_report_location = True)
+	info(config, e, html = True, print_html_report_location = True)
 	print ''
 
 	if dry:
@@ -714,6 +714,7 @@ def run(config, dry, notify, locally):
 
 	print >> experiment_stderr_file, Magic.echo(Magic.action_stats, {'time_started' : time.strftime(config.strftime)})
 	print >> experiment_stderr_file, Magic.echo(Magic.action_environ, dict(os.environ))
+	sgejob2job = {}
 	while e.status() and any(map(is_job_submittable, e.jobs)):
 		job_to_submit = filter(is_job_submittable, e.jobs)[0]
 		group, sgejob_idx = job_to_submit.group, job.group.jobs.index(job_to_submit)
@@ -724,7 +725,7 @@ def run(config, dry, notify, locally):
 	wait_if_more_jobs_than(0)
 	print >> experiment_stderr_file, Magic.echo(Magic.action_stats, {'time_finished' : time.strftime(config.strftime)})
 
-	info(e, html = True, print_html_report_location = False)
+	info(config, e, html = True, print_html_report_location = False)
 	
 	notify_if_enabled(e.status())
 	print ''
