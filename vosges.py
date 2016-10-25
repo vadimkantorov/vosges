@@ -643,8 +643,7 @@ def run(config, dry, notify, locally):
 					'#$ -l mem_req=%.2fG' % (group.mem_lo_gb or config.default_job_options.mem_lo_gb),
 					'#$ -l h_vmem=%.2fG' % (group.mem_hi_gb or config.default_job_options.mem_hi_gb),
 					'#$ -o %s -e %s\n' % P.sgejoblogfiles(group, sgejob_idx),
-					'#$ -q %s' % group.queue if group.queue else '',
-					''
+					(map('#$ -q {0}'.format, filter(bool, [group.queue, config.default_job_options.queue])) + [''])[0]
 				]))
 
 				for job in job.group.jobs[sgejob_idx : sgejob_idx + 1]:

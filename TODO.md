@@ -7,7 +7,7 @@
 # vosges run
 - allow for nameless jobs and nameless groups
 - makedirs fails if directory exists (maybe on second call)
-- group.mem_lo_gb or config.default_job_options.mem_lo_gb
+- group.mem_lo_gb or config.default_job_options.mem_lo_gb, same for queue, broken job < group < default merging
 - check sourced files for existence
 - make a lazy gen mode, when jobs are generated just before submission
 - check killed jobs for error reason with qacct
