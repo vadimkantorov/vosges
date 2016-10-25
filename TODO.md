@@ -1,24 +1,24 @@
-- a way to define first, last stage and number of parallel jobs as command line parameter; and to change it while vosges is running by file monitoring
+# logging
 - append stdout to exp log, write resilient to no disk space
-- save the final report to a separate file, maybe even with full logs
+- when printing - print info about the failed job and stack trace
+- print group execution start and finished
+- qdel messages should not be printed
 
+# vosges run
 - allow for nameless jobs and nameless groups
 - makedirs fails if directory exists (maybe on second call)
 - group.mem_lo_gb or config.default_job_options.mem_lo_gb
-- when printing - print info about the failed job and stack trace
-
 - check sourced files for existence
 - make a lazy gen mode, when jobs are generated just before submission
-- print group execution start and finished
-
-- change job lists to dictionaries for html gen
-
-- make html generation only from log files (do no log file ops on jobs that were not submitted)
-- vosges resume command
 - check killed jobs for error reason with qacct
-
-- update status even if not waiting for the queue
-
 - make config.root from ~/.vosgesrc override the default value
-- qdel messages should not be printed
+
+# vosges resume
+- a way to define first, last stage and number of parallel jobs as command line parameter; and to change it while vosges is running by file monitoring
+
+# vosges info
+- change job lists to dictionaries for html gen
+- make html generation only from log files (do no log file ops on jobs that were not submitted)
+- save the final report to a separate file, maybe even with full logs
 - group status should print how many jobs completed
+- update status even if not waiting for the queue
