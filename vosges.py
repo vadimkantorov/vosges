@@ -117,7 +117,7 @@ class ExecutionStatus:
 	killed = 'killed'
 
 	failed = [error, killed, canceled]
-	status_update_pending = [submitted, running]
+	enqueued = [submitted, running]
 
 	domination_lattice = {
 		waiting : [],
@@ -695,7 +695,7 @@ def run(config, dry, notify, locally):
 
 	def update_status():
 		active_jobs = [job for sgejob in Q.get_jobs(P.experiment_name_code, stderr = experiment_stderr_file) for job in sgejob2job[sgejob]]
-		for job in filter(lambda job: job.status in ExecutionStatus.status_update_pending, e.jobs):
+		for job in filter(lambda job: job.status in ExecutionStatus.enqueued, e.jobs):
 			job.status = Magic(P.read_or_empty(P.joblogfiles(job)[1])).status() or job.status
 			if job.status == ExecutionStatus.running and job not in active_jobs:
 				put_status(job, ExecutionStatus.killed)
@@ -723,7 +723,7 @@ def run(config, dry, notify, locally):
 		sgejob = Q.submit_job(P.sgejobfile(group, sgejob_idx), '%s_%s_%s' % (P.experiment_name_code, group.name, sgejob_idx), stderr = experiment_stderr_file)
 		sgejob2job[sgejob] = [job_to_submit]
 		job_to_submit.status = ExecutionStatus.submitted
-		if len([job for job in e.jobs if job.status != ExecutionStatus.waiting]) >= config.parallel_jobs:
+		if len([job for job in e.jobs if job.status in ExecutionStatus.enqueued]) >= config.parallel_jobs:
 			wait_if_more_jobs_than(config.parallel_jobs - 1)
 	wait_if_more_jobs_than(0)
 	print >> experiment_stderr_file, Magic.echo(Magic.action_stats, {'time_finished' : time.strftime(config.strftime)})
