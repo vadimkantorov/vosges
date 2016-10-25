@@ -19,5 +19,7 @@
 - vosges resume command
 - check killed jobs for error reason with qacct
 
+- batch submit jobs if number of running jobs is small
+
 - make config.root from ~/.vosgesrc override the default value
 - qdel messages should not be printed
