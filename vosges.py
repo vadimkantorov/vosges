@@ -422,11 +422,11 @@ def info(config, e = None, xpath = None, html = False, print_html_report_locatio
 						value = no_value ? 0 : value;
 						if(apply_format && name.indexOf('seconds') >= 0)
 						{
-							name = name + ' (h:m:s)'
+							name = name + ' (hh:mm:ss)'
 							var seconds = Math.round(value);
 							var hours = Math.floor(seconds / (60 * 60));
 							var divisor_for_minutes = seconds %% (60 * 60);
-							value = hours + ":" + String('0' + Math.floor(divisor_for_minutes / 60)).slice(-2) + ":" + String('0' + Math.ceil(divisor_for_minutes %% 60)).slice(-2);
+							value = (hours < 10 ? ('0' + hours) : hours) + ":" + String('0' + Math.floor(divisor_for_minutes / 60)).slice(-2) + ":" + String('0' + Math.ceil(divisor_for_minutes %% 60)).slice(-2);
 						}
 						else if(apply_format && name.indexOf('kbytes') >= 0)
 						{
