@@ -426,7 +426,7 @@ def info(config, e = None, xpath = None, html = False, print_html_report_locatio
 							var seconds = Math.round(value);
 							var hours = Math.floor(seconds / (60 * 60));
 							var divisor_for_minutes = seconds %% (60 * 60);
-							value = hours + ":" + Math.floor(divisor_for_minutes / 60) + ":" + Math.ceil(divisor_for_minutes %% 60);
+							value = hours + ":" + String('0' + Math.floor(divisor_for_minutes / 60)).slice(-2) + ":" + String('0' + Math.ceil(divisor_for_minutes %% 60)).slice(-2);
 						}
 						else if(apply_format && name.indexOf('kbytes') >= 0)
 						{

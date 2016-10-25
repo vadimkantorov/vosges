@@ -24,4 +24,3 @@
 - group status should print how many jobs completed
 - update status even if not waiting for the queue
 - jobs overflow behind footer
-- fix time_wall_clock_seconds formatting to use 02d:02d:02d
