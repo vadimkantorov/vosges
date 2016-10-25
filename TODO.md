@@ -12,6 +12,7 @@
 - make a lazy gen mode, when jobs are generated just before submission
 - check killed jobs for error reason with qacct
 - make config.root from ~/.vosgesrc override the default value
+- make Interpreter available to ~/.vosgesrc
 
 # vosges resume
 - a way to define first, last stage and number of parallel jobs as command line parameter; and to change it while vosges is running by file monitoring
@@ -23,3 +24,5 @@
 - group status should print how many jobs completed
 - update status even if not waiting for the queue
 - jobs overflow behind footer
+- active row style should not cover status column
+- fix time_wall_clock_seconds formatting to use 02d:02d:02d
