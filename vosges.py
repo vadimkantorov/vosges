@@ -717,13 +717,14 @@ def run(config, dry, notify, locally):
 	print >> experiment_stderr_file, Magic.echo(Magic.action_stats, {'time_started' : time.strftime(config.strftime)})
 	print >> experiment_stderr_file, Magic.echo(Magic.action_environ, dict(os.environ))
 	sgejob2job = {}
-	while e.status() and any(map(is_job_submittable, e.jobs)):
+	while e.status() not in ExecutionStatus.failed and any(map(is_job_submittable, e.jobs)):
 		job_to_submit = filter(is_job_submittable, e.jobs)[0]
 		group, sgejob_idx = job_to_submit.group, job.group.jobs.index(job_to_submit)
 		sgejob = Q.submit_job(P.sgejobfile(group, sgejob_idx), '%s_%s_%s' % (P.experiment_name_code, group.name, sgejob_idx), stderr = experiment_stderr_file)
 		sgejob2job[sgejob] = [job_to_submit]
 		job_to_submit.status = ExecutionStatus.submitted
-		wait_if_more_jobs_than(config.parallel_jobs - 1)
+		if len([job for job in e.jobs if job.status != ExecutionStatus.waiting]) >= config.parallel_jobs:
+			wait_if_more_jobs_than(config.parallel_jobs - 1)
 	wait_if_more_jobs_than(0)
 	print >> experiment_stderr_file, Magic.echo(Magic.action_stats, {'time_finished' : time.strftime(config.strftime)})
 
