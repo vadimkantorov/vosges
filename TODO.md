@@ -7,6 +7,7 @@
 - group.mem_lo_gb or config.default_job_options.mem_lo_gb
 - when printing - print info about the failed job
 - check sourced files for existence
+- print group execution start and finished
 
 - make html generation only from log files
 - vosges resume command

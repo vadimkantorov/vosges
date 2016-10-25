@@ -573,7 +573,7 @@ def clean(config):
 def stop(config, stderr = None):
 	print 'Stopping the experiment "%s"...' % P.experiment_name_code
 	Q.delete_jobs(Q.get_jobs(P.experiment_name_code, stderr = stderr), stderr = stderr)
-	while len(Q.get_jobs(P.experiment_name_code), stderr = stderr) > 0:
+	while len(Q.get_jobs(P.experiment_name_code, stderr = stderr)) > 0:
 		print '%d jobs are still not deleted. Sleeping...' % len(Q.get_jobs(P.experiment_name_code, stderr = stderr))
 		time.sleep(config.seconds_between_queue_checks)
 	print 'Done.\n'
@@ -702,6 +702,8 @@ def run(config, dry, notify, locally):
 			if job.status in ExecutionStatus.failed:
 				for job_to_cancel in filter(lambda job: job.status == ExecutionStatus.waiting, e.jobs):
 					put_status(job_to_cancel, ExecutionStatus.canceled)
+		
+		info(config, e, html = True, print_html_report_location = False)
 
 	def wait_if_more_jobs_than(num_jobs):
 		while len(Q.get_jobs(P.experiment_name_code, stderr = experiment_stderr_file)) > num_jobs:
