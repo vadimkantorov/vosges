@@ -22,3 +22,4 @@
 - save the final report to a separate file, maybe even with full logs
 - group status should print how many jobs completed
 - update status even if not waiting for the queue
+- jobs overflow behind footer
