@@ -35,7 +35,7 @@ class P:
 
 	@staticmethod
 	def read_or_empty(file_path):
-		subprocess.check_call(['touch', file_path]) # workaround for NFS caching
+		#subprocess.check_call(['touch', file_path]) # workaround for NFS caching
 		if os.path.exists(file_path):
 			with open(file_path, 'r') as f:
 				return f.read()
@@ -129,7 +129,7 @@ class ExecutionStatus:
 		killed : [waiting, submitted, running, success, canceled, error]
 	}
 
-	reduce = staticmethod(lambda acc, cur: [[dom for dom, sub in ExecutionStatus.domination_lattice.items() if cur == dom and acc in sub + [dom]] + [acc]][0])
+	reduce = staticmethod(lambda acc, cur: ([dom for dom, sub in ExecutionStatus.domination_lattice.items() if cur == dom and acc in sub + [dom]] + [acc])[0])
 
 class Magic(str):
 	def findall_and_load_arg(self, action, default = {}):
@@ -594,7 +594,7 @@ def init(config):
 		makedirs_if_does_not_exist(P.logdir(group))
 		makedirs_if_does_not_exist(P.jobdir(group))
 		makedirs_if_does_not_exist(P.sgejobdir(group))
-	
+
 	for job in e.jobs:
 		job.status = Magic(P.read_or_empty(P.joblogfiles(job)[1])).status() or job.status
 
@@ -624,7 +624,7 @@ def run(config, dry, notify, locally):
 	print intro_msg(P.experiment_root)
 
 	clean(config)
-	
+
 	e = init(config)
 	
 	for p in [p for job in e.jobs for p in get_used_paths(job) if p.domakedirs == True and not os.path.exists(str(p))]:
@@ -794,7 +794,7 @@ if __name__ == '__main__':
 	
 	parser_parent = argparse.ArgumentParser(parents = [run_parent], add_help = False)
 	parser_parent.add_argument('--rcfile', default = os.path.expanduser('~/.%src' % __tool_name__))
-	parser_parent.add_argument('--root', default = '.%s' % __tool_name__)
+	parser_parent.add_argument('--root') #, default = '.%s' % __tool_name__) # need to make work with ~/.vosgesrc config.root setting
 	parser_parent.add_argument('--html_root', action = 'append', default = [])
 	parser_parent.add_argument('--html_root_alias')
 	

@@ -7,8 +7,15 @@
 - group.mem_lo_gb or config.default_job_options.mem_lo_gb
 - when printing - print info about the failed job
 - check sourced files for existence
+- make a lazy gen mode, when jobs are generated just before submission
 - print group execution start and finished
 
-- make html generation only from log files
+- change job lists to dictionaries for html gen
+
+- do not make stdout / stderr files in generation stage
+
+- make html generation only from log files (do no log file ops on jobs that were not submitted)
 - vosges resume command
 - check killed jobs for error reason with qacct
+
+- make config.root from ~/.vosgesrc override the default value
