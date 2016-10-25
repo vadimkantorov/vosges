@@ -291,8 +291,8 @@ def info(config, e = None, xpath = None, html = False, print_html_report_locatio
 						</thead>
 						<tbody>
 							{{for}}
-							<tr {{if ~selected == name}}class="active"{{/if}}>
-								<td><a href="#{{>qualified_name}}">{{>qualified_name}}</a></td>
+							<tr>
+								<td {{if ~selected == name}}class="active"{{/if}}><a href="#{{>qualified_name}}">{{>qualified_name}}</a></td>
 								<td title="{{>status}}" class="job-status-{{>status}}"></td>
 							</tr>
 							{{/for}}
