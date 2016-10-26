@@ -2,7 +2,7 @@
 - append stdout to exp log, write resilient to no disk space
 - when printing - print info about the failed job and stack trace
 - print group execution start and finished + time elapsed, including for the whole exp
-- qdel messages should not be printed
+- qdel messages should be printed only on verbose stream
 
 # vosges run
 - allow for nameless jobs and nameless groups
