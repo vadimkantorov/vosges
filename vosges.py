@@ -164,7 +164,7 @@ class Executable:
 class JobOptions:
 	def __init__(self, executable = None, cwd = None, queue = None, parallel_jobs = None, mem_lo_gb = None, mem_hi_gb = None, source = [], path = [], ld_library_path = [], env = {}, parent = None, dependencies = [], **ignored):
 		self.dependencies = dependencies
-		self.executable = executable or (parent and parent.executable)
+		self.executable = (Executable(executable) if isinstance(executable, str) else executable) or (parent and parent.executable)
 		self.cwd = cwd or (parent and parent.cwd)
 		self.queue = queue or (parent and parent.queue)
 		self.parallel_jobs = parallel_jobs or (parent and parent.parallel_jobs)
@@ -206,7 +206,7 @@ class Experiment:
 
 	def job(self, executable, name = None, group = 'default', dependencies = [], **kwargs):
 		group = group if isinstance(group, JobGroup) else self.group(group)
-		name = Experiment.normalize_name(name or str([job.group for job in self.jobs].count(group)))
+		name = Experiment.normalize_name(name or str(1 + [job.group for job in self.jobs].count(group)))
 
 		job = Job(name, group, executable = executable, dependencies = map(self.resolve_dependency, dependencies), **kwargs)
 		self.jobs.append(job)
@@ -642,13 +642,15 @@ def run(config, dry, notify, locally):
 					'#$ -S /bin/bash',
 					'#$ -l mem_req=%.2fG' % (group.mem_lo_gb or config.default_job_options.mem_lo_gb),
 					'#$ -l h_vmem=%.2fG' % (group.mem_hi_gb or config.default_job_options.mem_hi_gb),
-					'#$ -o %s -e %s\n' % P.sgejoblogfiles(group, sgejob_idx),
-					(map('#$ -q {0}'.format, filter(bool, [group.queue, config.default_job_options.queue])) + [''])[0]
+					'#$ -o %s -e %s' % P.sgejoblogfiles(group, sgejob_idx),
+					(map('#$ -q {0}'.format, filter(bool, [group.queue, config.default_job_options.queue])) + [''])[0],
+					''
 				]))
 
 				for job in job.group.jobs[sgejob_idx : sgejob_idx + 1]:
 					job_stderr_path = P.joblogfiles(job)[1]
 					f.write('\n'.join([
+						''
 						'# %s' % job.qualified_name,
 						'echo "' + qq(Magic.echo(Magic.action_status, ExecutionStatus.running)) + '" > "%s"' % job_stderr_path,
 						'echo "' + qq(Magic.echo(Magic.action_stats, {
@@ -663,7 +665,6 @@ def run(config, dry, notify, locally):
 						'''([ "$?" == "0" ] && (echo "%s") || (echo "%s")) >> "%s"''' % (qq(Magic.echo(Magic.action_status, ExecutionStatus.success)), qq(Magic.echo(Magic.action_status, ExecutionStatus.error)), job_stderr_path),
 						'echo "' + qq(Magic.echo(Magic.action_stats, {'time_finished' : "$(date +'%s')" % config.strftime})) + '" >> "%s"' % job_stderr_path,
 						'# end',
-						''
 					]))
 
 	info(config, e, html = True, print_html_report_location = True)
