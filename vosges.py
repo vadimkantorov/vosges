@@ -783,7 +783,7 @@ if __name__ == '__main__':
 	run_parent.add_argument('--env', action = type('', (argparse.Action, ), dict(__call__ = lambda a, p, n, v, o: getattr(n, a.dest).update(dict([v.split('=')])))), default = {})
 	run_parent.add_argument('--mem_lo_gb', type = int, default = 2)
 	run_parent.add_argument('--mem_hi_gb', type = int, default = 10)
-	run_parent.add_argument('--parallel_jobs', type = int, default = 4)
+	run_parent.add_argument('-j', '--jobs', type = int, default = 4, dest = 'parallel_jobs')
 	run_parent.add_argument('--source', action = 'append', default = [])
 	run_parent.add_argument('--path', action = 'append', default = [])
 	run_parent.add_argument('--ld_library_path', action = 'append', default = [])
