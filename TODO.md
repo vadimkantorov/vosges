@@ -1,7 +1,7 @@
 # logging
 - append stdout to exp log, write resilient to no disk space
-- when printing - print info about the failed job and stack trace
-- print group execution start and finished + time elapsed, including for the whole exp
+- when printing - print info about the failed job and stack trace + suggest to open vosges log
+- print group execution start and finished + time elapsed, including for the whole exp + console progress bar
 - qdel messages should be printed only on verbose stream
 
 # vosges run
