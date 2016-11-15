@@ -1,11 +1,9 @@
 # logging
-- append stdout to exp log, write resilient to no disk space
+- append stdout to exp log, stderr, write resilient to no disk space
 - when printing - print info about the failed job and stack trace + suggest to open vosges log
 - print group execution start and finished + time elapsed, including for the whole exp + console progress bar
-- qdel messages should be printed only on verbose stream
 
 # vosges run
-- allow for nameless jobs and nameless groups
 - makedirs fails if directory exists (maybe on second call)
 - group.mem_lo_gb or config.default_job_options.mem_lo_gb, same for queue, broken job < group < default merging
 - make a lazy gen mode, when jobs are generated just before submission
