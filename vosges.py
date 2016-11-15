@@ -601,7 +601,7 @@ def init(config):
 	return e
 
 def run(config, dry, notify, locally):
-	get_used_paths = lambda job: [v for k, v in sorted(job.env.items()) if isinstance(v, Path)] + [Path(job.cwd), Path(job.executable.script_path) if os.path.isabs(job.executable.script_path) else Path(os.path.join(job.cwd, job.executable.script_path))]
+	get_used_paths = lambda job: [v for k, v in sorted(job.env.items()) if isinstance(v, Path)] + map(Path, job.source) + [Path(job.cwd), Path(job.executable.script_path if os.path.isabs(job.executable.script_path) else os.path.join(job.cwd, job.executable.script_path))]
 	generate_job_bash_script_lines = lambda job: ['# %s' % job.qualified_name] + ['for USED_FILE_PATH in "%s"; do' % '" "'.join(map(str, get_used_paths(job))), '\tif [ ! -e "$USED_FILE_PATH" ]; then echo File "$USED_FILE_PATH" does not exist; exit 1; fi', 'done'] + list(itertools.starmap('export {0}="{1}"'.format, sorted(dict(job.group.env.items() + job.env.items()).items()))) + ['\n'.join(['source "%s"' % source for source in job.source + job.group.source]), 'export PATH="%s:$PATH"' % ':'.join(job.path + job.group.path), 'export LD_LIBRARY_PATH="%s:$LD_LIBRARY_PATH"' % ':'.join(job.ld_library_path + job.group.ld_library_path), 'cd "%s"' % job.cwd, '%s %s "%s" %s' % (job.executable.executor, job.executable.command_line_options, job.executable.script_path, job.executable.script_args), '# end']
 
 	intro_msg = lambda experiment_path: '%-30s %s' % ('Generating the experiment to:', experiment_path)
