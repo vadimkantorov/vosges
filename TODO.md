@@ -17,7 +17,9 @@
 # vosges info
 - change job lists to dictionaries for html gen
 - make html generation only from log files (do no log file ops on jobs that were not submitted)
-- save the final report to a separate file, maybe even with full logs
-- group status should print how many jobs completed
+- group status_hint should print how many jobs completed
 - update status even if not waiting for the queue
 - jobs overflow behind footer
+
+# vosges archive
+- archive_root, --archive switch
