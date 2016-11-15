@@ -804,6 +804,7 @@ if __name__ == '__main__':
 	
 	cmd = subparsers.add_parser('stop')
 	cmd.add_argument('experiment_script')
+	cmd.add_argument('--verbose', action= 'store_const', dest = 'stderr',  default = open(os.devnull, 'w'), const = None)
 	cmd.set_defaults(func = stop)
 
 	cmd = subparsers.add_parser('clean')
