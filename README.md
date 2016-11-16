@@ -2,7 +2,7 @@ Vosges is a simple Python tool for generating and running Sun Grid Engine (SGE) 
 
 # Features
 - Neat mobile-ready HTML experiment monitoring dashboard with experiment progress and job logs
-- Notification of experiment results by e-mail (free registration with SendGrid required)
+- Notification of experiment results by e-mail (free registration with SendGrid required or mail command set up)
 - Easy experiment definition in Python
 - Command-line experiment management interface
 - Experiments are defined as arbitrary directed acyclic graphs (DAGs) of jobs and job groups
