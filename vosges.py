@@ -118,6 +118,7 @@ class ExecutionStatus:
 
 	failed = [error, killed, canceled]
 	enqueued = [submitted, running]
+	processed = [success, running, canceled, erorr, killed]
 
 	domination_lattice = {
 		waiting : [],
@@ -293,7 +294,7 @@ def info(config, e = None, xpath = None, html = False, print_html_report_locatio
 							{{for}}
 							<tr>
 								<td {{if ~selected == name}}class="active"{{/if}}><a href="#{{>qualified_name}}">{{>qualified_name}}</a></td>
-								<td title="{{>status}}" class="job-status-{{>status}}"></td>
+								<td title="{{>status}}" class="job-status-{{>status}}">{{>status_hint}}</td>
 							</tr>
 							{{/for}}
 						</tbody>
@@ -441,10 +442,11 @@ def info(config, e = None, xpath = None, html = False, print_html_report_locatio
 					var parsed_location = /\#(?:\/([^\/]+))?(?:\/(.+))?/.exec(window.location.hash) || [];
 					var group_name = parsed_location[1], job_name = parsed_location[2];
 
-					var group = $.grep(report.groups, function(group) {return group.name == group_name;})[0];
-					var job = $.grep(report.jobs, function(job) {return job.name == job_name && job.group == group_name;})[0];
-					var group_jobs = $.grep(report.jobs, function(job) {return job.group == group_name;});
-			
+					var ref = report.index[window.loation.hash]
+					var group = ref[0] && report.groups[ref[0]]
+					var job = group && ref[1] && group.jobs[ref[1]]
+					var group_jobs = group && group.jobs
+
 					$('#lnkExpName').html(report.name);
 					$('#divExp').html($('#tmplGroupsJobs').render(report.groups, {selected : group_name, header : 'groups'}, true));
 					$('#divJobs').html($('#tmplGroupsJobs').render(group ? group_jobs : report.jobs, {selected : job_name, header : 'jobs'}, true));
@@ -523,28 +525,30 @@ def info(config, e = None, xpath = None, html = False, print_html_report_locatio
 			'stderr_path' : '\n'.join(zip(*sgejoblogfiles(group))[1]),
 			'env' : group.env,
 			'script' : '\n'.join(map(P.read_or_empty, sgejobfile(group))),
-			'status' : e.status(group), 
+			'status' : e.status(group),
+			'status_hint' : ('%d / %d' % ([job.status for job in group.jobs].count(ExecutionStatus.success), len(group.jobs))) if any([job.status in ExecutionStatus.processed for job in group.jobs]) else '',
 			'stats' : {
 				'mem_lo_gb' : group.mem_lo_gb, 
 				'mem_hi_gb' : group.mem_hi_gb,
 			},
+			'jobs' : [put_extra_job_stats({
+				'name' : job.name,
+				'qualified_name' : job.qualified_name, 
+				'group' : job.group.name,
+				'stdout' : truncate_stdout(exp_job_logs[job][0]),
+				'stdout_path' : P.joblogfiles(job)[0],
+				'stderr' : exp_job_logs[job][1], 
+				'stderr_path' : P.joblogfiles(job)[1],
+				'script' : P.read_or_empty(P.jobfile(job)),
+				'script_path' : P.jobfile(job),
+				'status' : job.status, 
+				'environ' : exp_job_logs[job][1].environ(),
+				'env' : job.env,
+				'results' : process_results(exp_job_logs[job][1].results()),
+				'stats' : exp_job_logs[job][1].stats()
+			}) for job in group.jobs],
 		}) for group in e.groups],
-		'jobs' : [put_extra_job_stats({
-			'name' : job.name,
-			'qualified_name' : job.qualified_name, 
-			'group' : job.group.name,
-			'stdout' : truncate_stdout(exp_job_logs[job][0]),
-			'stdout_path' : P.joblogfiles(job)[0],
-			'stderr' : exp_job_logs[job][1], 
-			'stderr_path' : P.joblogfiles(job)[1],
-			'script' : P.read_or_empty(P.jobfile(job)),
-			'script_path' : P.jobfile(job),
-			'status' : job.status, 
-			'environ' : exp_job_logs[job][1].environ(),
-			'env' : job.env,
-			'results' : process_results(exp_job_logs[job][1].results()),
-			'stats' : exp_job_logs[job][1].stats()
-		}) for job in e.jobs] 
+		'index' : dict([(group.qualified_name, (group_idx, None)) for group_idx, group in enumerate(e.groups)] + [(job.qualified_name, (group_idx, job_idx)) for group, group_idx in enumerate(e.groups) for job_idx, job in enumerate(group.jobs)])
 	}
 
 	if html:
@@ -600,7 +604,7 @@ def init(config):
 
 	return e
 
-def run(config, dry, notify, locally):
+def run(config, dry, locally, notify, archive):
 	get_used_paths = lambda job: [v for k, v in sorted(job.env.items()) if isinstance(v, Path)] + map(Path, job.source) + [Path(job.cwd), Path(job.executable.script_path if os.path.isabs(job.executable.script_path) else os.path.join(job.cwd, job.executable.script_path))]
 	generate_job_bash_script_lines = lambda job: ['# %s' % job.qualified_name] + ['for USED_FILE_PATH in "%s"; do' % '" "'.join(map(str, get_used_paths(job))), '\tif [ ! -e "$USED_FILE_PATH" ]; then echo File "$USED_FILE_PATH" does not exist; exit 1; fi', 'done'] + list(itertools.starmap('export {0}="{1}"'.format, sorted(dict(job.group.env.items() + job.env.items()).items()))) + ['\n'.join(['source "%s"' % source for source in job.source + job.group.source]), 'export PATH="%s:$PATH"' % ':'.join(job.path + job.group.path), 'export LD_LIBRARY_PATH="%s:$LD_LIBRARY_PATH"' % ':'.join(job.ld_library_path + job.group.ld_library_path), 'cd "%s"' % job.cwd, '%s %s "%s" %s' % (job.executable.executor, job.executable.command_line_options, job.executable.script_path, job.executable.script_args), '# end']
 
@@ -743,37 +747,38 @@ def log(config, xpath, stdout = True, stderr = True):
 
 	subprocess.call('cat "%s" | less' % '" "'.join(log_paths), shell = True)
 
-def unhandled_exception_hook(exc_type, exc_value, exc_traceback):
-	formatted_exception_message = '\n'.join(
-		([
-			'No disk space left on device!',
-			'',
-			'Check that the following directories are writable:'] + 
-			[P.experiment_root] +
-			P.html_dir +
-			['', 'The stack trace is below.']
-		if isinstance(exc_value, IOError) and exc_value.errno == errno.ENOSP else
-		[
-			'Unhandled exception occured!',
-			'',
-			'Please consider filing a bug report at %s' % P.bugreport_page,
-			'Please paste the stack trace below into the issue.',
-		]) + [
-		'',
-		'==STACK_TRACE_BEGIN==',
-		'',
-		''.join(traceback.format_exception(exc_type, exc_value, exc_traceback)),
-		'',
-		'===STACK_TRACE_END==='
-	])
-	print >> sys.stderr, formatted_exception_message
-	
-	if unhandled_exception_hook.notification_hook_on_error:
-		unhandled_exception_hook.notification_hook_on_error(formatted_exception_message)
-
-	sys.exit(1)
+def archive(config):
+	pass
 
 if __name__ == '__main__':
+	def unhandled_exception_hook(exc_type, exc_value, exc_traceback):
+		formatted_exception_message = '\n'.join(
+			([
+				'No disk space left on device!',
+				'',
+				'Check that the following directories are writable:'] + 
+				[P.experiment_root] +
+				P.html_dir +
+				['', 'The stack trace is below.']
+			if isinstance(exc_value, IOError) and exc_value.errno == errno.ENOSP else
+			[
+				'Unhandled exception occured!',
+				'',
+				'Please consider filing a bug report at %s' % P.bugreport_page,
+				'Please paste the stack trace below into the issue.',
+			]) + [
+			'',
+			'==STACK_TRACE_BEGIN==',
+			'',
+			''.join(traceback.format_exception(exc_type, exc_value, exc_traceback)),
+			'',
+			'===STACK_TRACE_END==='
+		])
+		print >> sys.stderr, formatted_exception_message
+		if unhandled_exception_hook.notification_hook_on_error:
+			unhandled_exception_hook.notification_hook_on_error(formatted_exception_message)
+		sys.exit(1)
+
 	unhandled_exception_hook.notification_hook_on_error = None 
 	sys.excepthook = unhandled_exception_hook
 
@@ -831,7 +836,12 @@ if __name__ == '__main__':
 	cmd.add_argument('--dry', action = 'store_true')
 	cmd.add_argument('--locally', action = 'store_true')
 	cmd.add_argument('--notify', action = 'store_true')
+	cmd.add_argument('--archive', action = 'store_true')
 	cmd.set_defaults(func = run)
+
+	cmd = subparsers.add_parser('archive')
+	cmd.add_argument('experiment_script')
+	cmd.set_defaults(func = archive)
 	
 	args = vars(parser.parse_args())
 	
