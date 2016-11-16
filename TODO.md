@@ -8,7 +8,6 @@
 - group.mem_lo_gb or config.default_job_options.mem_lo_gb, same for queue, broken job < group < default merging
 - make a lazy gen mode, when jobs are generated just before submission
 - check killed jobs for error reason with qacct
-- make config.root from ~/.vosgesrc override the default value
 - make Interpreter available to ~/.vosgesrc, make interpreters for python, th, qlua, matlab
 
 # vosges resume

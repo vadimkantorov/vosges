@@ -795,16 +795,17 @@ if __name__ == '__main__':
 	
 	parser_parent = argparse.ArgumentParser(parents = [run_parent], add_help = False)
 	parser_parent.add_argument('--rcfile', default = os.path.expanduser('~/.%src' % __tool_name__))
-	parser_parent.add_argument('--root') #, default = '.%s' % __tool_name__) # need to make work with ~/.vosgesrc config.root setting
+	parser_parent.add_argument('--root', default = '.%s' % __tool_name__)
+	parser_parent.add_argument('--archive_root', action = 'append', default = [])
 	parser_parent.add_argument('--html_root', action = 'append', default = [])
 	parser_parent.add_argument('--html_root_alias')
 	
 	parser = argparse.ArgumentParser(parents = [parser_parent]) # separate parser to work around the config construction bug
 	subparsers = parser.add_subparsers()
-	
+
 	cmd = subparsers.add_parser('stop')
 	cmd.add_argument('experiment_script')
-	cmd.add_argument('--verbose', action= 'store_const', dest = 'stderr',  default = open(os.devnull, 'w'), const = None)
+	cmd.add_argument('--verbose', action = 'store_const',  dest = 'stderr', default = open(os.devnull, 'w'), const = None)
 	cmd.set_defaults(func = stop)
 
 	cmd = subparsers.add_parser('clean')
@@ -832,9 +833,9 @@ if __name__ == '__main__':
 	cmd.add_argument('--notify', action = 'store_true')
 	cmd.set_defaults(func = run)
 	
-	args = copy.deepcopy(vars(parser.parse_args())) # deepcopy to make config.html_root != args.get('html_root')
-
-	config = parser_parent.parse_args([]) # a hack constructing the config object to be used in rcfile exec and script exec
+	args = vars(parser.parse_args())
+	
+	config = copy.deepcopy(parser_parent.parse_args([])) # deepcopy to make config.html_root != args.get('html_root'), a hack constructing the config object to be used in rcfile exec and script exec
 	config.default_job_options = JobOptions(**vars(config)) # using default values from argparse to init the config
 	
 	sys.modules[__tool_name__] = imp.new_module(__tool_name__)
