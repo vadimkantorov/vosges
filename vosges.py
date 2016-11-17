@@ -149,7 +149,7 @@ class Magic(str):
 	action_results = 'results'
 	action_status = 'status'
 
-	echo = staticmethod(lambda action, arg: '%s %s %s' % (Magic.prefix, action, json.dumps(arg)))
+	echo = staticmethod(lambda action, arg: '%s %s %s\n' % (Magic.prefix, action, json.dumps(arg)))
 	stats = lambda self: dict(itertools.chain(*map(dict.items, self.findall_and_load_arg(Magic.action_stats) or [{}])))
 	environ = lambda self: (self.findall_and_load_arg(Magic.action_environ) or [{}])[0]
 	results = lambda self: self.findall_and_load_arg(Magic.action_results)
@@ -710,29 +710,28 @@ def run(config, dry, locally, notify, archive):
 		info(config, e, html = True)
 
 	def wait_if_more_jobs_than(num_jobs):
+		if len([job for job in e.jobs if job.status in ExecutionStatus.enqueued]) < num_jobs:
+			return
 		while len(Q.get_jobs(P.experiment_name_code, stderr = experiment_stderr_file)) > num_jobs:
 			time.sleep(config.seconds_between_queue_checks)
 			update_status()
-		update_status()
 
 	is_job_submittable = lambda job: job.status == ExecutionStatus.waiting and all(map(lambda dep: e.status(dep) == ExecutionStatus.success, job.dependencies))
 	unhandled_exception_hook.notification_hook = lambda exception_message: notify_if_needed(ExecutionStatus.error, exception_message)
 
-	print >> experiment_stderr_file, Magic.echo(Magic.action_stats, {'time_started' : time.strftime(config.strftime)})
-	print >> experiment_stderr_file, Magic.echo(Magic.action_environ, dict(os.environ))
 	sgejob2job = {}
+	print >> experiment_stderr_file, '\n'.join([Magic.echo(Magic.action_stats, {'time_started' : time.strftime(config.strftime)}), Magic.echo(Magic.action_environ, dict(os.environ))])
 	while e.status() not in ExecutionStatus.failed and any(map(is_job_submittable, e.jobs)):
 		job_to_submit = filter(is_job_submittable, e.jobs)[0]
 		group, sgejob_idx = job_to_submit.group, job.group.jobs.index(job_to_submit)
 		sgejob = Q.submit_job(P.sgejobfile(group, sgejob_idx), '%s_%s_%s' % (P.experiment_name_code, group.name, sgejob_idx), stderr = experiment_stderr_file)
 		sgejob2job[sgejob] = [job_to_submit]
 		job_to_submit.status = ExecutionStatus.submitted
-		if len([job for job in e.jobs if job.status in ExecutionStatus.enqueued]) >= config.parallel_jobs:
-			wait_if_more_jobs_than(config.parallel_jobs - 1)
+		wait_if_more_jobs_than(config.parallel_jobs - 1)
+		update_status()
 	wait_if_more_jobs_than(0)
 	print >> experiment_stderr_file, Magic.echo(Magic.action_stats, {'time_finished' : time.strftime(config.strftime)})
-
-	info(config, e, html = True)
+	update_status()
 	
 	notify_if_enabled(e.status())
 	print ''
