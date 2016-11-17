@@ -1,7 +1,6 @@
 # logging
 - append stdout to exp log, stderr, write resilient to no disk space
 - when printing - print info about the failed job and stack trace + suggest to open vosges log
-- print group execution start and finished + time elapsed, including for the whole exp + console progress bar
 
 # vosges run
 - makedirs fails if directory exists (maybe on second call)
@@ -15,8 +14,8 @@
 
 # vosges info
 - make html generation only from log files (do no log file ops on jobs that were not submitted)
-- update status even if not waiting for the queue
 - jobs overflow behind footer
+- print group execution start and finished + time elapsed, including for the whole exp + console progress bar
 
 # vosges archive
 - archive_root, --archive switch
