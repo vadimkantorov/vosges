@@ -16,6 +16,3 @@
 - make html generation only from log files (do no log file ops on jobs that were not submitted)
 - jobs overflow behind footer
 - print group execution start and finished + time elapsed, including for the whole exp + console progress bar
-
-# vosges archive
-- archive_root, --archive switch

@@ -50,16 +50,17 @@ class P:
 		P.experiment_name_code = P.experiment_name + '_' + hashlib.md5(os.path.abspath(P.experiment_script)).hexdigest()[:3].upper()
 		
 		P.root = os.path.abspath(config.root)
-		P.html_root = config.html_root or [os.path.join(P.root, 'html')]
-		P.html_root_alias = config.html_root_alias
-		P.html_report_file_name = P.experiment_name_code + '.html'
-		P.html_report_url = os.path.join(P.html_root_alias or P.html_root[0], P.html_report_file_name)
+		P.html_root = config.html_root or os.path.join(P.root, 'html')
+		P.archive_root = config.archive_root or os.path.join(P.root, 'archive')
+		P.html_report_file_path = os.path.join(P.html_root, P.experiment_name_code + '.html')
+		P.archive_report_file_path = lambda experiment_status, localtime: os.path.join(P.archive_root, '%s_%s_%s.html' % (P.experiment_name_code, experiment_status, time.strftime(config.strftime, localtime)))
+		P.html_report_url = os.path.join(config.html_root_alias or P.html_root, P.html_report_file_name)
 
 		P.experiment_root = os.path.join(P.root, P.experiment_name_code)
 		P.log = os.path.join(P.experiment_root, 'log')
 		P.job = os.path.join(P.experiment_root, 'job')
 		P.sgejob = os.path.join(P.experiment_root, 'sge')
-		P.all_dirs = [P.root, P.experiment_root, P.log, P.job, P.sgejob] + P.html_root
+		P.all_dirs = [P.root, P.experiment_root, P.log, P.job, P.sgejob, P.html_root, P.archive_root]
 
 class Q:
 	@staticmethod
@@ -459,8 +460,7 @@ def info(config, e = None, xpath = None, html = False, print_html_report_locatio
 </html>
 '''
 
-	if e == None:
-		e = init(config)
+	e = e or init(config)
 
 	sgejoblogfiles = lambda group: [P.sgejoblogfiles(group, sgejob_idx) for sgejob_idx in range(len(group.jobs))]
 	sgejobfile = lambda group: [P.sgejobfile(group, sgejob_idx) for sgejob_idx in range(len(group.jobs))]
@@ -555,9 +555,8 @@ def info(config, e = None, xpath = None, html = False, print_html_report_locatio
 		if print_html_report_location:
 			print '%-30s %s' % ('Report will be at:', P.html_report_url)
 		report_json = json.dumps(report, default = str)
-		for html_dir in P.html_root:
-			with open(os.path.join(html_dir, P.html_report_file_name), 'w') as f:
-				f.write(HTML_PATTERN % (P.experiment_name_code, P.project_page, time.strftime(config.strftime), report_json))
+		with open(P.html_report_file_path, 'w') as f:
+			f.write(HTML_PATTERN % (P.experiment_name_code, P.project_page, time.strftime(config.strftime), report_json))
 	else:
 		def truncate(d):
 			for truncate_key in ['stdout', 'stderr', 'script', 'rcfile']:
@@ -604,7 +603,7 @@ def init(config):
 
 	return e
 
-def run(config, dry, locally, notify, archive):
+def run(config, dry, locally, notify_enabled, archive_enabled):
 	get_used_paths = lambda job: [v for k, v in sorted(job.env.items()) if isinstance(v, Path)] + map(Path, job.source) + [Path(job.cwd), Path(job.executable.script_path if os.path.isabs(job.executable.script_path) else os.path.join(job.cwd, job.executable.script_path))]
 	generate_job_bash_script_lines = lambda job: ['# %s' % job.qualified_name] + ['for USED_FILE_PATH in "%s"; do' % '" "'.join(map(str, get_used_paths(job))), '\tif [ ! -e "$USED_FILE_PATH" ]; then echo File "$USED_FILE_PATH" does not exist; exit 1; fi', 'done'] + list(itertools.starmap('export {0}="{1}"'.format, sorted(dict(job.group.env.items() + job.env.items()).items()))) + ['\n'.join(['source "%s"' % source for source in job.source + job.group.source]), 'export PATH="%s:$PATH"' % ':'.join(job.path + job.group.path), 'export LD_LIBRARY_PATH="%s:$LD_LIBRARY_PATH"' % ':'.join(job.ld_library_path + job.group.ld_library_path), 'cd "%s"' % job.cwd, '%s %s "%s" %s' % (job.executable.executor, job.executable.command_line_options, job.executable.script_path, job.executable.script_args), '# end']
 
@@ -680,8 +679,8 @@ def run(config, dry, locally, notify, archive):
 
 	experiment_stderr_file = open(P.explogfiles()[1], 'w')
 
-	def notify_if_enabled(experiment_status, exception_message = None):
-		if notify:
+	def notify_and_archive(experiment_status, exception_message = None):
+		if notify_enabled:
 			sys.stdout.write('Executing custom notification_command. ')
 			cmd = config.notification_command.format(
 				EXECUTION_STATUS = experiment_status,
@@ -691,6 +690,8 @@ def run(config, dry, locally, notify, archive):
 				EXCEPTION_MESSAGE = exception_message
 			)
 			print 'Exit code: %d' % subprocess.call(cmd, shell = True, stdout = experiment_stderr_file, stderr = experiment_stderr_file)
+		if archive_enabled:
+			archive(config, e)
 
 	def put_status(job, status):
 		with open(P.joblogfiles(job)[1], 'a') as f:
@@ -733,7 +734,7 @@ def run(config, dry, locally, notify, archive):
 	print >> experiment_stderr_file, Magic.echo(Magic.action_stats, {'time_finished' : time.strftime(config.strftime)})
 	update_status()
 	
-	notify_if_enabled(e.status())
+	notify_and_archive(e.status())
 	print ''
 	print 'ALL OK. KTHXBAI!' if e.status() == ExecutionStatus.success else 'ERROR. QUITTING!'
 
@@ -746,8 +747,11 @@ def log(config, xpath, stdout = True, stderr = True):
 
 	subprocess.call('cat "%s" | less' % '" "'.join(log_paths), shell = True)
 
-def archive(config):
-	pass
+def archive(config, e = None):
+	e = e or init(config)
+	archive_report_file_path = P.archive_report_file_path(e.status(), time.localtime())
+	print '%-30s %s' % ('Archived report will be at:', archive_report_file_path)
+	shutil.copyfile(P.html_report_file_path, archive_report_file_path)
 
 if __name__ == '__main__':
 	def unhandled_exception_hook(exc_type, exc_value, exc_traceback):
@@ -800,8 +804,8 @@ if __name__ == '__main__':
 	parser_parent = argparse.ArgumentParser(parents = [run_parent], add_help = False)
 	parser_parent.add_argument('--rcfile', default = os.path.expanduser('~/.%src' % __tool_name__))
 	parser_parent.add_argument('--root', default = '.%s' % __tool_name__)
-	parser_parent.add_argument('--archive_root', action = 'append', default = [])
-	parser_parent.add_argument('--html_root', action = 'append', default = [])
+	parser_parent.add_argument('--archive_root')
+	parser_parent.add_argument('--html_root')
 	parser_parent.add_argument('--html_root_alias')
 	
 	parser = argparse.ArgumentParser(parents = [parser_parent]) # separate parser to work around the config construction bug
@@ -834,8 +838,8 @@ if __name__ == '__main__':
 	cmd.add_argument('experiment_script')
 	cmd.add_argument('--dry', action = 'store_true')
 	cmd.add_argument('--locally', action = 'store_true')
-	cmd.add_argument('--notify', action = 'store_true')
-	cmd.add_argument('--archive', action = 'store_true')
+	cmd.add_argument('--notify', action = 'store_true', dest = 'notify_enabled')
+	cmd.add_argument('--archive', action = 'store_true', dest = 'archive_enabled')
 	cmd.set_defaults(func = run)
 
 	cmd = subparsers.add_parser('archive')
@@ -855,7 +859,6 @@ if __name__ == '__main__':
 		exec open(config.rcfile).read() in config.experiment_script_scope
 	
 	config.default_job_options = JobOptions(parent = config.default_job_options, **args) # updating config using command-line args
-	config.html_root += args.pop('html_root')
 	vars(config).update({k : args.pop(k) or v for k, v in vars(config).items() if k in args}) # removing all keys from args except the method args
 	
 	P.init(config, args.pop('experiment_script'))
