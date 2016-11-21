@@ -53,7 +53,7 @@ class P:
 		P.html_root = config.html_root or os.path.join(P.root, 'html')
 		P.archive_root = config.archive_root or os.path.join(P.root, 'archive')
 		P.html_report_file_path = os.path.join(P.html_root, P.experiment_name_code + '.html')
-		P.archive_report_file_path = lambda experiment_status, localtime: os.path.join(P.archive_root, '%s_%s_%s.html' % (P.experiment_name_code, experiment_status, time.strftime(config.strftime, localtime)))
+		P.archive_report_file_path = staticmethod(lambda experiment_status, localtime: os.path.join(P.archive_root, '%s_%s_%s.html' % (P.experiment_name_code, experiment_status, time.strftime(config.strftime, localtime))))
 		P.html_report_url = os.path.join(config.html_root_alias or P.html_root, P.html_report_file_name)
 
 		P.experiment_root = os.path.join(P.root, P.experiment_name_code)
