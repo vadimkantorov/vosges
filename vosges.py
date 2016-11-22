@@ -737,6 +737,9 @@ def run(config, dry, locally, notify_enabled, archive_enabled):
 	notify_and_archive(e.status())
 	print ''
 	print 'ALL OK. KTHXBAI!' if e.status() == ExecutionStatus.success else 'ERROR. QUITTING!'
+	
+def resume(config, dry, locally, notify_enabled, archive_enabled):
+	pass
 
 def log(config, xpath, stdout = True, stderr = True):
 	e = init(config)
@@ -841,6 +844,14 @@ if __name__ == '__main__':
 	cmd.add_argument('--notify', action = 'store_true', dest = 'notify_enabled')
 	cmd.add_argument('--archive', action = 'store_true', dest = 'archive_enabled')
 	cmd.set_defaults(func = run)
+	
+	cmd = subparsers.add_parser('resume', parents = [run_parent])
+	cmd.add_argument('experiment_script')
+	cmd.add_argument('--dry', action = 'store_true')
+	cmd.add_argument('--locally', action = 'store_true')
+	cmd.add_argument('--notify', action = 'store_true', dest = 'notify_enabled')
+	cmd.add_argument('--archive', action = 'store_true', dest = 'archive_enabled')
+	cmd.set_defaults(func = resume)
 
 	cmd = subparsers.add_parser('archive')
 	cmd.add_argument('experiment_script')
