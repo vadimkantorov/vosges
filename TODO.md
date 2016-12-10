@@ -8,6 +8,7 @@
 - make a lazy gen mode, when jobs are generated just before submission
 - check killed jobs for error reason with qacct
 - make Interpreter available to ~/.vosgesrc, make interpreters for python, th, qlua, matlab
+- lock a file exclusively while running
 
 # vosges resume
 - a way to define first, last stage and number of parallel jobs as command line parameter; and to change it while vosges is running by file monitoring
