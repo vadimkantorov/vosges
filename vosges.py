@@ -156,17 +156,20 @@ class Magic(str):
 	results = lambda self: self.findall_and_load_arg(Magic.action_results)
 	status = lambda self: (self.findall_and_load_arg(Magic.action_status, default = None) or [None])[-1]
 
-class Executable:
+class Exec:
 	def __init__(self, executor, script_path = '', script_args = '', command_line_options = ''):
 		self.executor = executor
 		self.command_line_options = command_line_options
 		self.script_path = script_path
 		self.script_args = script_args
 
+	def __getattr__(self, executor):
+		return lambda *args, **kwargs: Exec(executor, *args, **kwargs)
+
 class JobOptions:
 	def __init__(self, executable = None, cwd = None, queue = None, parallel_jobs = None, mem_lo_gb = None, mem_hi_gb = None, source = [], path = [], ld_library_path = [], env = {}, parent = None, dependencies = [], **ignored):
 		self.dependencies = dependencies
-		self.executable = (Executable(executable) if isinstance(executable, str) else executable) or (parent and parent.executable)
+		self.executable = (Exec(executable) if isinstance(executable, str) else executable) or (parent and parent.executable)
 		self.cwd = cwd or (parent and parent.cwd)
 		self.queue = queue or (parent and parent.queue)
 		self.parallel_jobs = parallel_jobs or (parent and parent.parallel_jobs)
@@ -200,8 +203,6 @@ class Experiment:
 		self.qualified_name = '/'
 		self.jobs = []
 		self.groups = []
-
-	interpreter = staticmethod(functools.partial(functools.partial, Executable))
 
 	normalize_name = staticmethod(lambda name: '_'.join(map(str, name)) if isinstance(name, tuple) else str(name))
 	resolve_dependency = lambda self, dep: dep if isinstance(dep, Job) or isinstance(dep, JobGroup) else self.find(dep) if isinstance(dep, str) else self.find('/%s/%s' % tuple(map(Experiment.normalize_name, dep)))
@@ -863,7 +864,7 @@ if __name__ == '__main__':
 	config.default_job_options = JobOptions(**vars(config)) # using default values from argparse to init the config
 	
 	sys.modules[__tool_name__] = imp.new_module(__tool_name__)
-	vars(sys.modules[__tool_name__]).update(dict(config = config, Executable = Executable, Path = Path))
+	vars(sys.modules[__tool_name__]).update(dict(config = config, Exec = Exec, Path = Path))
 
 	config.experiment_script_scope = {}
 	if os.path.exists(config.rcfile):
