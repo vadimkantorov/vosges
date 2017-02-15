@@ -163,8 +163,7 @@ class Exec:
 		self.script_path = script_path
 		self.script_args = script_args
 
-	def __getattr__(self, executor):
-		return lambda *args, **kwargs: Exec(executor, *args, **kwargs)
+	__metaclass__ = type('', (type, ), dict(__getattr__ = lambda self, executor: lambda *args: Exec(executor, *args)))
 
 class JobOptions:
 	def __init__(self, executable = None, cwd = None, queue = None, parallel_jobs = None, mem_lo_gb = None, mem_hi_gb = None, source = [], path = [], ld_library_path = [], env = {}, parent = None, dependencies = [], **ignored):
@@ -230,7 +229,7 @@ class Experiment:
 	def status(self, obj = None):
 		return reduce(ExecutionStatus.reduce, [job.status for job in self.jobs if job == obj or job.group == obj or obj == None])
 
-def info(config, e = None, xpath = None, html = False, print_html_report_location = False):
+def status(config, e = None, xpath = None, html = False, print_html_report_location = False):
 	HTML_PATTERN = '''
 <!DOCTYPE html>
 
@@ -671,7 +670,7 @@ def run(config, dry, locally, notify_enabled, archive_enabled):
 						'# end',
 					]))
 
-	info(config, e, html = True, print_html_report_location = True)
+	status(config, e, html = True, print_html_report_location = True)
 	print ''
 
 	if dry:
@@ -709,7 +708,7 @@ def run(config, dry, locally, notify_enabled, archive_enabled):
 				for job_to_cancel in filter(lambda job: job.status == ExecutionStatus.waiting, e.jobs):
 					put_status(job_to_cancel, ExecutionStatus.canceled)
 		
-		info(config, e, html = True)
+		status(config, e, html = True)
 
 	def wait_if_more_jobs_than(num_jobs):
 		if len([job for job in e.jobs if job.status in ExecutionStatus.enqueued]) < num_jobs:
@@ -831,12 +830,12 @@ if __name__ == '__main__':
 	cmd.add_argument('--stderr', action = 'store_false', dest = 'stdout')
 	cmd.set_defaults(func = log)
 
-	cmd = subparsers.add_parser('info')
+	cmd = subparsers.add_parser('status')
 	cmd.add_argument('experiment_script')
 	cmd.add_argument('--xpath', default = '/')
 	parser._get_option_tuples = lambda arg_string: [] if any([subparser._get_option_tuples(arg_string) for action in parser._subparsers._actions if isinstance(action, argparse._SubParsersAction) for subparser in action.choices.values()]) else super(ArgumentParser, parser)._get_option_tuples(arg_string) # monkey patching for https://bugs.python.org/issue14365, hack inspired by https://bugs.python.org/file24945/argparse_dirty_hack.py
 	cmd.add_argument('--html', dest = 'html', action = 'store_true')
-	cmd.set_defaults(func = info, print_html_report_location = True)
+	cmd.set_defaults(func = status, print_html_report_location = True)
 	
 	cmd = subparsers.add_parser('run', parents = [run_parent])
 	cmd.add_argument('experiment_script')
